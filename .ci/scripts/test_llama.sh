@@ -8,6 +8,8 @@
 set -exu
 # shellcheck source=/dev/null
 source "$(dirname "${BASH_SOURCE[0]}")/utils.sh"
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/llama_export_timing.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -254,7 +256,10 @@ if [[ "${QUANTIZE_KV_CACHE}" == "ON" ]]; then
   EXPORT_ARGS="${EXPORT_ARGS} model.quantize_kv_cache=true"
 fi
 # Add dynamically linked library location
-$PYTHON_EXECUTABLE -m extension.llm.export.export_llm ${EXPORT_ARGS}
+run_llama_export_with_timing \
+  "${MODEL_NAME}" \
+  "${EXPORTED_MODEL_NAME}" \
+  "$PYTHON_EXECUTABLE" -m extension.llm.export.export_llm ${EXPORT_ARGS}
 
 # Create tokenizer.bin.
 echo "Creating tokenizer.bin"
