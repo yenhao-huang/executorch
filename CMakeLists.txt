@@ -612,13 +612,17 @@ if(EXECUTORCH_BUILD_PYBIND AND APPLE)
 endif()
 
 #
-# executorch: Primary runtime library with primitive operators.
+# prim_ops_lib: Primary runtime library with primitive operators.
 #
 # Provides the Program and Method interfaces, along with primitive operators.
 # Does not contain portable kernels or other full operators. Does not contain
 # any backends.
 #
 add_library(executorch ${_executorch__srcs})
+set_target_properties(
+  executorch PROPERTIES OUTPUT_NAME prim_ops_lib EXPORT_NAME prim_ops_lib
+)
+add_library(prim_ops_lib ALIAS executorch)
 target_link_libraries(executorch PRIVATE executorch_core)
 target_include_directories(executorch PUBLIC ${_common_include_directories})
 target_compile_definitions(executorch PUBLIC C10_USING_CUSTOM_GENERATED_MACROS)
@@ -626,7 +630,7 @@ if(NOT EXECUTORCH_ENABLE_LOGGING)
   target_compile_definitions(executorch PUBLIC ET_LOG_ENABLED=0)
 endif()
 target_compile_options(executorch PUBLIC ${_common_compile_options})
-executorch_target_link_options_shared_lib(executorch)
+executorch_target_link_options_shared_lib(executorch prim_ops_lib)
 
 #
 # portable_ops_lib: A library to register core ATen ops using portable kernels,
@@ -660,7 +664,7 @@ endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/configurations)
 
-# Install `executorch` library as well as `executorch-config.cmake` under
+# Install `prim_ops_lib` as well as `executorch-config.cmake` under
 # ${CMAKE_INSTALL_PREFIX}/
 install(
   DIRECTORY runtime/core/

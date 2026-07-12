@@ -29,7 +29,7 @@ include(CMakeFindDependencyMacro)
 find_package(tokenizers CONFIG)
 
 set(_root "${CMAKE_CURRENT_LIST_DIR}/../../..")
-set(required_lib_list executorch executorch_core portable_kernels)
+set(required_lib_list prim_ops_lib executorch_core portable_kernels)
 set(EXECUTORCH_LIBRARIES)
 set(EXECUTORCH_INCLUDE_DIRS
     ${_root}/include ${_root}/include/executorch/runtime/core/portable_type/c10
@@ -51,6 +51,15 @@ endforeach()
 set(EXECUTORCH_FOUND ON)
 
 include("${CMAKE_CURRENT_LIST_DIR}/ExecuTorchTargets.cmake")
+
+if(NOT TARGET executorch)
+  add_library(executorch INTERFACE IMPORTED)
+  set_target_properties(
+    executorch
+    PROPERTIES INTERFACE_LINK_LIBRARIES prim_ops_lib
+               EXECUTORCH_WHOLE_ARCHIVE_TARGET prim_ops_lib
+  )
+endif()
 
 set(optional_lib_list
     aoti_cuda_backend

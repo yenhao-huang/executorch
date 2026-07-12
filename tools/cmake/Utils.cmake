@@ -22,40 +22,58 @@
 # target_link_options is broken for this case, it only append the interface link
 # options of the first library.
 function(executorch_kernel_link_options target_name)
+  set(archive_target_name "${target_name}")
+  if(ARGC GREATER 1)
+    set(archive_target_name "${ARGV1}")
+  endif()
   # target_link_options(${target_name} INTERFACE
   # "$<LINK_LIBRARY:WHOLE_ARCHIVE,target_name>")
   target_link_options(
     ${target_name} INTERFACE "SHELL:LINKER:--whole-archive \
-    $<TARGET_FILE:${target_name}> \
+    $<TARGET_FILE:${archive_target_name}> \
     LINKER:--no-whole-archive"
   )
 endfunction()
 
 # Same as executorch_kernel_link_options but it's for MacOS linker
 function(executorch_macos_kernel_link_options target_name)
+  set(archive_target_name "${target_name}")
+  if(ARGC GREATER 1)
+    set(archive_target_name "${ARGV1}")
+  endif()
   target_link_options(
     ${target_name} INTERFACE
-    "SHELL:LINKER:-force_load,$<TARGET_FILE:${target_name}>"
+    "SHELL:LINKER:-force_load,$<TARGET_FILE:${archive_target_name}>"
   )
 endfunction()
 
 # Same as executorch_kernel_link_options but it's for MSVC linker
 function(executorch_msvc_kernel_link_options target_name)
+  set(archive_target_name "${target_name}")
+  if(ARGC GREATER 1)
+    set(archive_target_name "${ARGV1}")
+  endif()
   target_link_options(
     ${target_name} INTERFACE
-    "SHELL:LINKER:/WHOLEARCHIVE:$<TARGET_FILE:${target_name}>"
+    "SHELL:LINKER:/WHOLEARCHIVE:$<TARGET_FILE:${archive_target_name}>"
   )
 endfunction()
 
 # Ensure that the load-time constructor functions run. By default, the linker
 # would remove them since there are no other references to them.
 function(executorch_target_link_options_shared_lib target_name)
+  get_target_property(
+    _whole_archive_target ${target_name} EXECUTORCH_WHOLE_ARCHIVE_TARGET
+  )
+  if(_whole_archive_target)
+    return()
+  endif()
   if(APPLE)
-    executorch_macos_kernel_link_options(${target_name})
+    executorch_macos_kernel_link_options(${target_name} ${ARGN})
   elseif(MSVC)
-    executorch_msvc_kernel_link_options(${target_name})
+    executorch_msvc_kernel_link_options(${target_name} ${ARGN})
   else()
-    executorch_kernel_link_options(${target_name})
+    executorch_kernel_link_options(${target_name} ${ARGN})
   endif()
 endfunction()
 
