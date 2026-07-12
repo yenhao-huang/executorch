@@ -41,6 +41,20 @@ fbcode_target(_kind = python_unittest,
 )
 
 fbcode_target(_kind = python_unittest,
+    name = "test_checkpoint_quantization",
+    srcs = [
+        "test_checkpoint_quantization.py",
+    ],
+    deps = [
+        "//caffe2:torch",
+        "//executorch/examples/models/llama:export_library",
+        "//executorch/examples/models/llama:llama2_model",
+        "//executorch/examples/models/llama:llama_transformer",
+        "//pytorch/ao:torchao",
+    ],
+)
+
+fbcode_target(_kind = python_unittest,
     name = "test_static_attention",
     srcs = [
         "test_static_attention.py",

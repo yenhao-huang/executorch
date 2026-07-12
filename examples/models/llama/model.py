@@ -155,21 +155,7 @@ class Llama2Model(EagerModelBase):
             else:
                 self.model_.checkpoint_dtype = torch.float32
 
-        if "int8" in str(checkpoint_path):
-            print("Using int8 weight-only quantization!")
-            # pyre-ignore: Undefined import [21]: Could not find a module corresponding to import `executorch.examples.models.source_transformation.quantize`
-            from ..source_transformation.quantize import WeightOnlyInt8QuantHandler
-
-            simple_quantizer = WeightOnlyInt8QuantHandler(self.model_)
-            self.model_ = simple_quantizer.convert_for_runtime()
-        elif "8da4w" in str(checkpoint_path):
-            print("Using int4 weight and int8 dynamic activation quantization!")
-            from torchao.quantization.quant_api import Int8DynActInt4WeightQuantizer
-
-            self.model_ = Int8DynActInt4WeightQuantizer()._convert_for_runtime(
-                self.model_
-            )
-        elif self.llm_config.quantization.use_spin_quant:
+        if self.llm_config.quantization.use_spin_quant:
             print("Using SPIN quantization.")
             self._transform_for_pre_quantization(checkpoint, model_args)
 
