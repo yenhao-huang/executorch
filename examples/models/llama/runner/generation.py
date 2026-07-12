@@ -6,7 +6,7 @@
 
 import time
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import torch
 
@@ -57,6 +57,7 @@ class LlamaRunner(ABC):
         use_kv_cache: bool,
         vocab_size: int,
         device: str = "cpu",
+        eos_ids: Optional[Iterable[int]] = None,
     ):
         """
         Constructor.
@@ -68,11 +69,18 @@ class LlamaRunner(ABC):
             use_kv_cache: whether to use a KV cache.
             vocab_size: number of items in the vocab.
             device: device to run the runner on.
+            eos_ids: token IDs that terminate generation. Uses tokenizer metadata
+                when omitted.
         """
         self.max_seq_len = max_seq_len
         self.max_batch_size = max_batch_size
         self.use_kv_cache = use_kv_cache
         self.tokenizer = get_tokenizer(tokenizer_path, tokenizer_config_path)
+        if eos_ids is None:
+            self.eos_ids = {self.tokenizer.eos_id}
+            self.eos_ids.update(getattr(self.tokenizer, "stop_tokens", []))
+        else:
+            self.eos_ids = set(eos_ids)
         self.device = device
         # For some models like qwen, mismatch is acceptable: https://github.com/QwenLM/Qwen2.5/issues/466#issuecomment-2146759706
         if vocab_size != self.tokenizer.n_words:
@@ -110,11 +118,12 @@ class LlamaRunner(ABC):
         prefill_time = time.time() - prefill_start
 
         current_token = next_token(logits, temperature, top_p)
-        print(f"{self.tokenizer.decode_token(current_token)}", end="", flush=True)
         tokens = prompt_tokens + [current_token]
+        if current_token not in self.eos_ids:
+            print(f"{self.tokenizer.decode_token(current_token)}", end="", flush=True)
 
         generate_start = time.time()
-        while len(tokens) < max_seq_len:
+        while len(tokens) < max_seq_len and current_token not in self.eos_ids:
             if self.use_kv_cache:
                 logits = self.forward(
                     tokens=torch.tensor(
@@ -135,10 +144,7 @@ class LlamaRunner(ABC):
             current_token = next_token(logits, temperature, top_p)
             tokens.append(current_token)
 
-            if current_token == self.tokenizer.eos_id or (
-                hasattr(self.tokenizer, "stop_tokens")
-                and current_token in self.tokenizer.stop_tokens
-            ):
+            if current_token in self.eos_ids:
                 break
 
             print(f"{self.tokenizer.decode_token(current_token)}", end="", flush=True)

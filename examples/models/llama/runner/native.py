@@ -44,6 +44,8 @@ class NativeLlamaRunner(LlamaRunner):
             vocab_size=params["vocab_size"],
         )
         self.model = _load_for_executorch(args.pte)
+        if "get_eos_ids" in self.model.method_names():
+            self.eos_ids = set(self.model.run_method("get_eos_ids"))
 
     def forward(
         self,
