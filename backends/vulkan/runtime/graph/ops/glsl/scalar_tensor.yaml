@@ -22,6 +22,5 @@ scalar_tensor:
     SCALAR_VALUE_TYPE:
       - VALUE: float
       - VALUE: int32
-      - VALUE: bool
   shader_variants:
     - NAME: scalar_tensor
