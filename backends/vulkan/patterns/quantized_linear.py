@@ -110,6 +110,10 @@ class QuantizedLinearMatch(PatternMatch):
         self.quantize_input_node = None
         self.dequantize_input_node = None
         self.pattern_input_node = anchor_primary_input_node
+        # The float activation, for the ops whose runtime quantizes the input
+        # itself rather than taking an already-quantized one. None when the
+        # float tensor is not reachable from the match.
+        self.fp_input_node = anchor_primary_input_node
 
         self.input_scales_node = None
         self.input_zeros_node = None
@@ -137,6 +141,15 @@ class QuantizedLinearMatch(PatternMatch):
 
             self.input_scales_node = self.dequantize_input_node.args[scales_arg_idx]
             self.input_zeros_node = self.dequantize_input_node.args[zeros_arg_idx]
+
+            # The float activation sits behind the quantize node, when the
+            # pattern has one. Ops such as et_vk.linear_q8ta_q8csw quantize the
+            # activation in the runtime and need it.
+            self.fp_input_node = (
+                input_to_dq_node.args[0]
+                if utils.is_quant_node(input_to_dq_node)
+                else None
+            )
 
             # Check for dynamic quantization: input scales are dynamically
             # computed via a choose_qparams op
@@ -508,7 +521,10 @@ def make_linear_q8ta_q8csw_custom_op(
             "call_function",
             exir_ops.edge.et_vk.linear_q8ta_q8csw.default,
             args=(
-                match.pattern_input_node,
+                # The runtime names this argument fp_input and quantizes it
+                # itself, so it takes the float activation rather than the
+                # already-quantized tensor the pattern matched on.
+                match.fp_input_node,
                 match.input_scales_node,
                 match.input_zeros_node,
                 match.weight_node,
@@ -641,5 +657,9 @@ def replace_quantized_linear_patterns(
     elif (
         match.is_input_static_per_tensor_quantized()
         and match.is_weight_perchannel_quantized()
+        # Without a reachable float activation there is nothing to hand this op,
+        # so leave the linear to the CPU instead of lowering something that
+        # cannot run.
+        and match.fp_input_node is not None
     ):
         make_linear_q8ta_q8csw_custom_op(ep, graph_module, match, weight_tensor)

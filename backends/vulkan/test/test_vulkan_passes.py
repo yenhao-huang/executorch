@@ -8,6 +8,7 @@ from executorch.backends.vulkan._passes.fuse_patterns import FusePatternsPass
 from executorch.backends.vulkan._passes.remove_redundant_ops import (
     RemoveRedundantOpsTransform,
 )
+from executorch.backends.vulkan.patterns import replace_all_fusable_subgraphs
 
 from executorch.exir import EdgeCompileConfig, EdgeProgramManager, to_edge
 
@@ -617,6 +618,102 @@ class TestVulkanPasses(unittest.TestCase):
             1,
             "Expected at least one q8ta_linear op from output-quantized linear fusion",
         )
+
+    def test_linear_q8ta_q8csw_takes_the_float_activation(self):
+        """et_vk.linear_q8ta_q8csw quantizes its input in the runtime, so the
+        fusion has to hand it the float activation. Passing the already
+        quantized int8 tensor lowers cleanly and then fails at the first
+        inference looking for a shader named after an int8 input. See
+        https://github.com/pytorch/executorch/issues/22775.
+        """
+        qd = torch.ops.quantized_decomposed
+        K, N, M = 256, 256, 8
+        torch.manual_seed(0)
+        weight = torch.randn(N, K)
+        weight_scales = weight.abs().amax(dim=1).clamp(min=1e-8) / 127.0
+        weight_zeros = torch.zeros(N, dtype=torch.int64)
+        weight_q = qd.quantize_per_channel.default(
+            weight, weight_scales, weight_zeros, 0, -127, 127, torch.int8
+        )
+        act_scale = 0.05
+
+        class StaticallyQuantizedLinear(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("w_q", weight_q)
+                self.register_buffer("s_w", weight_scales)
+                self.register_buffer("z_w", weight_zeros)
+                self.bias = torch.nn.Parameter(torch.randn(N))
+
+            def forward(self, x):
+                xq = qd.quantize_per_tensor.default(
+                    x, act_scale, 0, -128, 127, torch.int8
+                )
+                xdq = qd.dequantize_per_tensor.default(
+                    xq, act_scale, 0, -128, 127, torch.int8
+                )
+                wdq = qd.dequantize_per_channel.default(
+                    self.w_q, self.s_w, self.z_w, 0, -127, 127, torch.int8
+                )
+                return torch.nn.functional.linear(xdq, wdq, self.bias)
+
+        model = StaticallyQuantizedLinear().eval()
+        sample_inputs = (torch.randn(M, K),)
+
+        edge_program = to_edge(torch.export.export(model, sample_inputs))
+        ep = edge_program.exported_program()
+        replace_all_fusable_subgraphs(ep, ep.graph_module)
+
+        fused = [
+            node
+            for node in ep.graph_module.graph.nodes
+            if node.op == "call_function"
+            and str(getattr(node.target, "_name", node.target))
+            == "et_vk::linear_q8ta_q8csw"
+        ]
+        self.assertEqual(len(fused), 1)
+        self.assertEqual(fused[0].args[0].meta["val"].dtype, torch.float32)
+
+    def test_q8ta_linear_still_takes_the_quantized_activation(self):
+        """et_vk.q8ta_linear takes an already-quantized input, unlike
+        linear_q8ta_q8csw. See
+        https://github.com/pytorch/executorch/issues/22775.
+        """
+        from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import (
+            get_symmetric_quantization_config,
+            XNNPACKQuantizer,
+        )
+
+        class TwoLinearModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear1 = torch.nn.Linear(128, 64, bias=False)
+                self.linear2 = torch.nn.Linear(64, 32, bias=False)
+
+            def forward(self, x):
+                return self.linear2(self.linear1(x))
+
+        quantizer = XNNPACKQuantizer()
+        quantizer.set_global(
+            get_symmetric_quantization_config(is_per_channel=True, is_dynamic=False)
+        )
+        sample_inputs = (torch.randn(4, 128),)
+        edge_program = quantize_and_lower_module(
+            TwoLinearModule(), sample_inputs, quantizer
+        )
+
+        ep = edge_program._edge_programs["forward"]
+        replace_all_fusable_subgraphs(ep, ep.graph_module)
+
+        fused = [
+            node
+            for node in ep.graph_module.graph.nodes
+            if node.op == "call_function"
+            and str(getattr(node.target, "_name", node.target)) == "et_vk::q8ta_linear"
+        ]
+        self.assertTrue(fused)
+        for node in fused:
+            self.assertEqual(node.args[0].meta["val"].dtype, torch.int8)
 
     def test_fuse_q8ta_linear_gemv(self):
         """Test that batch-1 quantized linear fuses into q8ta_linear_gemv."""
