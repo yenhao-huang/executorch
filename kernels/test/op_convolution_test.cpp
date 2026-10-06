@@ -1085,3 +1085,229 @@ TEST_F(OpConvCorrectnessTest, TransposedOutputTiles) {
     EXPECT_TENSOR_EQ(out, exp);
   }
 }
+
+//
+// 3D (rank-5) convolution: https://github.com/pytorch/executorch/issues/13490
+//
+
+namespace {
+// A pattern that every float dtype represents exactly, so the 3D references
+// below can be compared with EXPECT_TENSOR_EQ.
+std::vector<float> conv3d_ramp(size_t numel) {
+  std::vector<float> values(numel);
+  for (size_t i = 0; i < numel; ++i) {
+    values[i] = static_cast<float>(i % 7) - 3.0f;
+  }
+  return values;
+}
+} // namespace
+
+TEST_F(OpConvCorrectnessTest, Conv3dBasic) {
+  TensorFactory<ScalarType::Float> tf;
+  auto input = tf.make({1, 2, 3, 4, 5}, conv3d_ramp(120));
+  auto weight = tf.make({3, 2, 2, 2, 2}, conv3d_ramp(48));
+  auto bias = tf.make({3}, {1, -2, 0.5});
+  // PyTorch reference: torch.nn.functional.conv3d with bias.
+  auto expected = tf.make(
+      {1, 3, 2, 3, 4},
+      {13, 1, 31, -2, -19, 11, 13, 1, -2, -28,
+       -19, 11, 11, 13, 1, 31, -28, -19, 11, 13,
+       31, -2, -28, -19, 23, -13, -21, 6, -10, -4,
+       23, -13, 6, 5, -10, -4, -4, 23, -13, -21,
+       5, -10, -4, 23, -21, 6, 5, -10, -3.5, 34.5,
+       -11.5, -22.5, 11.5, -6.5, -3.5, 34.5, -22.5, 1.5, 11.5, -6.5,
+       -6.5, -3.5, 34.5, -11.5, 1.5, 11.5, -6.5, -3.5, -11.5, -22.5,
+       1.5, 11.5});
+  auto out = tf.zeros_like(expected);
+  const int64_t stride[] = {1, 1, 1};
+  const int64_t padding[] = {0, 0, 0};
+  const int64_t dilation[] = {1, 1, 1};
+  const int64_t output_padding[] = {0, 0, 0};
+  op_convolution_out(
+      input,
+      weight,
+      bias,
+      stride,
+      padding,
+      dilation,
+      false,
+      output_padding,
+      1,
+      out);
+  EXPECT_TENSOR_EQ(out, expected);
+}
+
+TEST_F(OpConvCorrectnessTest, Conv3dStridePaddingDilation) {
+  TensorFactory<ScalarType::Float> tf;
+  auto input = tf.make({1, 1, 5, 5, 5}, conv3d_ramp(125));
+  auto weight = tf.make({2, 1, 2, 3, 2}, conv3d_ramp(24));
+  // PyTorch reference: asymmetric stride, padding and dilation, no bias.
+  auto expected = tf.make(
+      {1, 2, 3, 7, 2},
+      {2, -3, -4, -1, -3, 14, 8, -3, -9, 8,
+       -4, -10, -3, -3, 8, -5, -8, 13, -18, -14,
+       13, -18, 9, 13, 2, 5, -5, 6, 8, -7,
+       0, 11, -16, 13, -3, -16, 10, -3, -4, 5,
+       -7, -3, -4, -3, -1, 14, 10, -4, -11, 10,
+       -11, -11, 5, -10, 2, 8, -8, 5, -10, -14,
+       24, -20, 5, 24, -14, 5, 5, -10, 8, 10,
+       -2, 3, -12, 11, 13, -24, 8, 13, -11, 8,
+       -10, -10, 8, -3});
+  auto out = tf.zeros_like(expected);
+  const int64_t stride[] = {2, 1, 2};
+  const int64_t padding[] = {1, 2, 0};
+  const int64_t dilation[] = {2, 1, 1};
+  const int64_t output_padding[] = {0, 0, 0};
+  op_convolution_out(
+      input,
+      weight,
+      optional<Tensor>(),
+      stride,
+      padding,
+      dilation,
+      false,
+      output_padding,
+      1,
+      out);
+  EXPECT_TENSOR_EQ(out, expected);
+}
+
+TEST_F(OpConvCorrectnessTest, Conv3dGroups) {
+  TensorFactory<ScalarType::Float> tf;
+  auto input = tf.make({1, 4, 3, 3, 3}, conv3d_ramp(108));
+  auto weight = tf.make({4, 2, 2, 2, 2}, conv3d_ramp(64));
+  auto bias = tf.make({4}, {0.5, -0.5, 1, -1});
+  // PyTorch reference: groups=2.
+  auto expected = tf.make(
+      {1, 4, 2, 2, 2},
+      {-7.5, 22.5, 26.5, 7.5, 10.5, 26.5, -25.5, -30.5, -3.5, 2.5,
+       7.5, -0.5, 15.5, 7.5, -22.5, -2.5, 32, 28, -15, -26,
+       3, -15, -9, -6, -8, 6, -1, 6, -1, -1,
+       -8, -1});
+  auto out = tf.zeros_like(expected);
+  const int64_t stride[] = {1, 1, 1};
+  const int64_t padding[] = {0, 0, 0};
+  const int64_t dilation[] = {1, 1, 1};
+  const int64_t output_padding[] = {0, 0, 0};
+  op_convolution_out(
+      input,
+      weight,
+      bias,
+      stride,
+      padding,
+      dilation,
+      false,
+      output_padding,
+      2,
+      out);
+  EXPECT_TENSOR_EQ(out, expected);
+}
+
+TEST_F(OpConvCorrectnessTest, Conv3dBatch) {
+  TensorFactory<ScalarType::Float> tf;
+  auto input = tf.make({2, 2, 3, 3, 3}, conv3d_ramp(108));
+  auto weight = tf.make({2, 2, 2, 2, 2}, conv3d_ramp(32));
+  // PyTorch reference: batch of two.
+  auto expected = tf.make(
+      {2, 2, 2, 2, 2},
+      {-8, 22, 26, 7, 10, 26, -26, -31, -3, 3,
+       8, 0, 16, 8, -22, -2, -26, -31, 22, 10,
+       -8, 22, 26, 7, -22, -2, 3, 16, -3, 3,
+       8, 0});
+  auto out = tf.zeros_like(expected);
+  const int64_t stride[] = {1, 1, 1};
+  const int64_t padding[] = {0, 0, 0};
+  const int64_t dilation[] = {1, 1, 1};
+  const int64_t output_padding[] = {0, 0, 0};
+  op_convolution_out(
+      input,
+      weight,
+      optional<Tensor>(),
+      stride,
+      padding,
+      dilation,
+      false,
+      output_padding,
+      1,
+      out);
+  EXPECT_TENSOR_EQ(out, expected);
+}
+
+TEST_F(OpConvCorrectnessTest, Conv3dTransposed) {
+  TensorFactory<ScalarType::Float> tf;
+  auto input = tf.make({1, 2, 2, 2, 2}, conv3d_ramp(16));
+  auto weight = tf.make({2, 3, 2, 2, 2}, conv3d_ramp(48));
+  auto bias = tf.make({3}, {1, 0, -1});
+  // PyTorch reference: torch.nn.functional.conv_transpose3d with bias.
+  auto expected = tf.make(
+      {1, 3, 3, 3, 3},
+      {10, 11, 4, 3, -3, -1, 2, 3, 4, 1,
+       -6, -2, -13, 10, 18, -11, -7, -5, -4, -8,
+       -1, 14, 16, -7, 13, -15, 10, 4, 2, 0,
+       -4, 2, 3, 0, 2, -3, -2, -7, -1, 4,
+       4, -6, -6, 8, 4, -2, -1, 3, 9, 4,
+       -8, -9, 0, 4, -2, -7, -4, 3, 0, 0,
+       -2, -6, -3, -5, 13, 14, -14, -16, -9, 13,
+       16, -1, 0, -1, -7, 11, -15, 12, -10, -6,
+       -2});
+  auto out = tf.zeros_like(expected);
+  const int64_t stride[] = {1, 1, 1};
+  const int64_t padding[] = {0, 0, 0};
+  const int64_t dilation[] = {1, 1, 1};
+  const int64_t output_padding[] = {0, 0, 0};
+  op_convolution_out(
+      input,
+      weight,
+      bias,
+      stride,
+      padding,
+      dilation,
+      true,
+      output_padding,
+      1,
+      out);
+  EXPECT_TENSOR_EQ(out, expected);
+}
+
+TEST_F(OpConvCorrectnessTest, Conv3dTransposedStridePaddingOutputPadding) {
+  TensorFactory<ScalarType::Float> tf;
+  auto input = tf.make({1, 1, 3, 3, 3}, conv3d_ramp(27));
+  auto weight = tf.make({1, 2, 3, 2, 2}, conv3d_ramp(24));
+  // PyTorch reference: transposed with stride, padding and output_padding.
+  auto expected = tf.make(
+      {1, 2, 6, 7, 2},
+      {-8, -5, 3, 3, 1, 4, 3, 3, 3, -8,
+       -18, 3, 0, 0, 9, 1, -3, -3, -15, -2,
+       -3, 4, 10, 9, 4, -3, 0, 0, -2, 1,
+       3, 3, 7, 3, 3, -18, -5, -2, 3, 3,
+       0, 0, -7, -15, -3, -3, 4, 10, 4, 4,
+       1, -7, -3, -3, 0, 0, 4, 7, 3, 3,
+       -8, -5, 3, 3, 1, 4, 3, 3, 0, 0,
+       -5, -8, 1, 2, 7, 4, -3, -2, -2, -5,
+       0, 1, 0, 0, 2, 1, -8, -5, -1, -2,
+       1, 4, 3, 2, 3, -8, 0, 0, 0, 5,
+       9, 1, 15, 6, -15, -2, -26, 0, 10, 9,
+       0, 0, 0, -1, -2, 1, -3, 3, 7, 3,
+       1, 0, -5, -2, 0, 0, 10, 15, -7, -15,
+       -10, -26, 4, 10, 5, 10, 1, -7, 0, 0,
+       -2, -3, 4, 7, 2, 1, -8, -5, -1, -2,
+       1, 4, 0, 0, 3, 3, -5, -8, 3, 3,
+       7, 4, 3, 3, -2, -5, 0, 0});
+  auto out = tf.zeros_like(expected);
+  const int64_t stride[] = {2, 2, 1};
+  const int64_t padding[] = {1, 0, 1};
+  const int64_t dilation[] = {1, 1, 1};
+  const int64_t output_padding[] = {1, 1, 0};
+  op_convolution_out(
+      input,
+      weight,
+      optional<Tensor>(),
+      stride,
+      padding,
+      dilation,
+      true,
+      output_padding,
+      1,
+      out);
+  EXPECT_TENSOR_EQ(out, expected);
+}

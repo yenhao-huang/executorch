@@ -175,6 +175,125 @@ ET_NOINLINE void transposed_conv2d_impl(
   }
 }
 
+// Advance a spatial odometer over sizes[2:]; false once it wraps past the end.
+bool increment_spatial(
+    int64_t* coord,
+    SizesArrayRef sizes,
+    const size_t n_spatial) {
+  for (size_t i = n_spatial; i-- > 0;) {
+    if (++coord[i] < sizes[i + 2]) {
+      return true;
+    }
+    coord[i] = 0;
+  }
+  return false;
+}
+
+// Convolution for an arbitrary number of spatial dimensions. The 1D/2D paths
+// above are hand-tuned and stay in use for rank-3 and rank-4 inputs; this
+// covers rank-5 (3D) convolution, forward and transposed.
+template <typename CTYPE, typename LoadFn = CTYPE (*)(const void*)>
+ET_NOINLINE void convnd_impl(
+    const CTYPE* const in_ptr,
+    SizesArrayRef in_sizes,
+    StridesArrayRef in_strides,
+    const CTYPE* const w_ptr,
+    SizesArrayRef w_sizes,
+    StridesArrayRef w_strides,
+    const std::optional<Tensor>& bias,
+    const char* const bias_ptr,
+    LoadFn load_bias,
+    IntArrayRef stride,
+    IntArrayRef padding,
+    IntArrayRef dilation,
+    const int64_t groups,
+    CTYPE* const out_ptr,
+    SizesArrayRef out_sizes,
+    StridesArrayRef out_strides,
+    const size_t batch,
+    const size_t group,
+    const size_t out_c,
+    const bool transposed) {
+  const size_t n_spatial = in_sizes.size() - 2;
+
+  const size_t in_C = in_sizes[1];
+  const size_t in_C_per_group = in_C / groups;
+  const size_t in_c_start = group * in_C_per_group;
+  const size_t out_C_per_group = out_sizes[1] / groups;
+  const size_t out_c_start = group * out_C_per_group;
+
+  using COMPUTE_T =
+      typename executorch::runtime::promote_types<CTYPE, CTYPE, true>::type;
+
+  const COMPUTE_T bias_val = bias_ptr == nullptr
+      ? COMPUTE_T{0}
+      : static_cast<COMPUTE_T>(
+            load_bias(&bias_ptr[out_c * bias.value().element_size()]));
+
+  int64_t out_coord[kTensorDimensionLimit] = {};
+  int64_t w_coord[kTensorDimensionLimit] = {};
+  int64_t in_coord[kTensorDimensionLimit] = {};
+
+  // Transposed weights are [in_C, out_C / groups, *kernel]; forward weights are
+  // [out_C, in_C / groups, *kernel].
+  const size_t w_out_offset =
+      transposed ? (out_c - out_c_start) * w_strides[1] : out_c * w_strides[0];
+
+  do {
+    COMPUTE_T accum = 0;
+    for (const auto in_c :
+         c10::irange(in_c_start, in_c_start + in_C_per_group)) {
+      const size_t in_c_offset = in_c * in_strides[1];
+      const size_t w_c_offset = transposed
+          ? in_c * w_strides[0]
+          : (in_c - in_c_start) * w_strides[1];
+      std::fill(w_coord, w_coord + n_spatial, int64_t{0});
+      do {
+        bool in_bounds = true;
+        for (const auto k : c10::irange(n_spatial)) {
+          const int64_t stride_k = val_at(stride, k);
+          const int64_t padding_k = val_at(padding, k, /*default_value=*/0);
+          const int64_t dilation_k = val_at(dilation, k);
+          int64_t in_k;
+          if (transposed) {
+            // out = in * stride + w * dilation - padding, solved for in.
+            const int64_t shifted =
+                out_coord[k] + padding_k - w_coord[k] * dilation_k;
+            if (shifted < 0 || shifted % stride_k != 0) {
+              in_bounds = false;
+              break;
+            }
+            in_k = shifted / stride_k;
+          } else {
+            in_k = out_coord[k] * stride_k + w_coord[k] * dilation_k - padding_k;
+          }
+          if (in_k < 0 || in_k >= in_sizes[k + 2]) {
+            in_bounds = false;
+            break;
+          }
+          in_coord[k] = in_k;
+        }
+        if (!in_bounds) {
+          continue;
+        }
+        size_t in_idx = batch * in_strides[0] + in_c_offset;
+        size_t w_idx = w_out_offset + w_c_offset;
+        for (const auto k : c10::irange(n_spatial)) {
+          in_idx += in_coord[k] * in_strides[k + 2];
+          w_idx += w_coord[k] * w_strides[k + 2];
+        }
+        accum += static_cast<COMPUTE_T>(in_ptr[in_idx]) *
+            static_cast<COMPUTE_T>(w_ptr[w_idx]);
+      } while (increment_spatial(w_coord, w_sizes, n_spatial));
+    }
+    size_t out_idx = batch * out_strides[0] + out_c * out_strides[1];
+    for (const auto k : c10::irange(n_spatial)) {
+      out_idx += out_coord[k] * out_strides[k + 2];
+    }
+    out_ptr[out_idx] = accum + bias_val;
+  } while (increment_spatial(out_coord, out_sizes, n_spatial));
+}
+
 template <typename CTYPE, typename LoadFn = CTYPE (*)(const void*)>
 void conv2d_impl(
     const CTYPE* const in_ptr,
@@ -388,6 +507,9 @@ ET_NOINLINE void convolution_wrapper(
   dim_order_to_stride_nocheck(
       out_sizes.data(), out_dim_order.data(), out_sizes.size(), out_strides);
 
+  // After the rank-3 unsqueeze above, every tensor has the same rank.
+  const size_t ndim = in_sizes.size();
+
   CTYPE* const out_ptr = out.mutable_data_ptr<CTYPE>();
   const CTYPE* const in_ptr = in.const_data_ptr<CTYPE>();
   const CTYPE* const w_ptr = weight.const_data_ptr<CTYPE>();
@@ -406,27 +528,51 @@ ET_NOINLINE void convolution_wrapper(
       // Populate all the out channels in the group
       for (const auto out_c :
            c10::irange(out_c_start, out_c_start + out_C_per_group)) {
-        conv2d_impl(
-            in_ptr,
-            in_sizes,
-            {in_strides, 4},
-            w_ptr,
-            weight_sizes,
-            {weight_strides, 4},
-            bias,
-            bias_ptr,
-            load_bias,
-            stride_,
-            padding_,
-            dilation_,
-            groups,
-            out_ptr,
-            out_sizes,
-            {out_strides, 4},
-            batch,
-            group,
-            out_c,
-            transposed);
+        if (ndim == 4) {
+          conv2d_impl(
+              in_ptr,
+              in_sizes,
+              {in_strides, 4},
+              w_ptr,
+              weight_sizes,
+              {weight_strides, 4},
+              bias,
+              bias_ptr,
+              load_bias,
+              stride_,
+              padding_,
+              dilation_,
+              groups,
+              out_ptr,
+              out_sizes,
+              {out_strides, 4},
+              batch,
+              group,
+              out_c,
+              transposed);
+        } else {
+          convnd_impl(
+              in_ptr,
+              in_sizes,
+              {in_strides, ndim},
+              w_ptr,
+              weight_sizes,
+              {weight_strides, ndim},
+              bias,
+              bias_ptr,
+              load_bias,
+              stride_,
+              padding_,
+              dilation_,
+              groups,
+              out_ptr,
+              out_sizes,
+              {out_strides, ndim},
+              batch,
+              group,
+              out_c,
+              transposed);
+        }
       }
     }
   }
