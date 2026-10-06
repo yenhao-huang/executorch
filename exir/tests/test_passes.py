@@ -3249,3 +3249,27 @@ class TestCSEPass(unittest.TestCase):
         self.assertTrue(result.modified)
         self.assertEqual(self._count_ops(result.graph_module, neg_target), 1)
         self.assertEqual(self._count_ops(result.graph_module, abs_target), 1)
+
+
+class TestToOutVarPassUnsupportedTarget(unittest.TestCase):
+    """A target that is not an op overload has no `_schema`, and reaching for
+    one raised an AttributeError naming an internal attribute rather than the
+    error the pass already had for this case. The PT2E reference representation
+    emits such a target, `torch.ops.higher_order.out_dtype`. See
+    https://github.com/pytorch/executorch/issues/9852.
+    """
+
+    def test_higher_order_target_reports_the_operator(self) -> None:
+        from torch._higher_order_ops.out_dtype import out_dtype
+
+        class OutDtypeModule(torch.nn.Module):
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                return out_dtype(torch.ops.aten.mul.Tensor, torch.int32, x, x)
+
+        inputs = (torch.ones(2, 2, dtype=torch.int8),)
+        edge = to_edge(export(OutDtypeModule(), inputs, strict=True))
+
+        with self.assertRaises(RuntimeError) as caught:
+            edge.to_executorch()
+        self.assertIn("Require an op overload for target", str(caught.exception))
+        self.assertIn("out_dtype", str(caught.exception))
