@@ -81,6 +81,18 @@ fbcode_target(_kind = runtime.python_test,
 )
 
 fbcode_target(_kind = runtime.python_test,
+    name = "test_qconfig",
+    srcs = [
+        "test_qconfig.py",
+    ],
+    deps = [
+        "//caffe2:torch",
+        "//executorch/backends/qualcomm/quantizer:quantizer",
+        "//executorch/backends/qualcomm/utils:utils",
+    ],
+)
+
+fbcode_target(_kind = runtime.python_test,
     name = "test_passes",
     srcs = [
         "test_passes.py",
