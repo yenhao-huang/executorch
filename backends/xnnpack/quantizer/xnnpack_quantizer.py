@@ -32,6 +32,9 @@ from torchao.quantization.pt2e.quantizer import (
     QuantizationSpec,
     Quantizer,
 )
+from executorch.backends.transforms.quantization_summary import (
+    log_quantization_summary,
+)
 
 
 if TYPE_CHECKING:
@@ -386,6 +389,8 @@ class XNNPACKQuantizer(Quantizer):
         """just handling global spec for now"""
         model = self._annotate_for_quantization_config(model)
         propagate_annotation(model)
+        # Quantization can "succeed" and do nothing, so say what was annotated.
+        log_quantization_summary(model, type(self).__name__)
         return model
 
     def _annotate_all_patterns(

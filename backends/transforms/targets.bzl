@@ -255,6 +255,18 @@ def define_common_targets():
     )
 
     runtime.python_library(
+        name = "quantization_summary",
+        srcs = ["quantization_summary.py"],
+        visibility = [
+            "//executorch/backends/...",
+        ],
+        deps = [
+            "//caffe2:torch",
+            "//pytorch/ao:torchao",  # @manual
+        ],
+    )
+
+    runtime.python_library(
         name = "duplicate_dynamic_quant_chain",
         srcs = ["duplicate_dynamic_quant_chain.py"],
         visibility = ["PUBLIC"],
