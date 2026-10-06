@@ -9,6 +9,10 @@ import torch as _torch
 
 from attr import define as _define
 
+from coremltools.optimize.torch.quantization._utils import (
+    get_quant_range as _get_quant_range,
+)
+
 from coremltools.optimize.torch.quantization.quantization_config import (
     ModuleLinearQuantizerConfig as _ModuleLinearQuantizerConfig,
     QuantizationScheme as _QuantizationScheme,
@@ -111,6 +115,15 @@ class AnnotationConfig:
             is_per_channel=quantization_config.weight_per_channel,
         )
         weight_dtype = cls._normalize_dtype(quantization_config.weight_dtype)
+        # A sub-byte config such as "qint4" is carried as an int8 dtype plus a
+        # narrower weight_n_bits, so the range has to come from the bit count:
+        # without it a 4-bit config produces the same spec as an 8-bit one and
+        # the weights come out 8-bit. The range is coremltools' own, so the
+        # PT2E flow and the coremltools flow agree.
+        weight_quant_min, weight_quant_max = _get_quant_range(
+            n_bits=quantization_config.weight_n_bits,
+            dtype=weight_dtype,
+        )
         weight_qspec = _TorchQuantizationSpec(
             observer_or_fake_quant_ctr=_FakeQuantize.with_args(
                 observer=_get_observer(
@@ -119,9 +132,13 @@ class AnnotationConfig:
                 ),
                 dtype=weight_dtype,
                 qscheme=weight_qscheme,
+                quant_min=weight_quant_min,
+                quant_max=weight_quant_max,
             ),
             dtype=weight_dtype,
             qscheme=weight_qscheme,
+            quant_min=weight_quant_min,
+            quant_max=weight_quant_max,
         )
         return AnnotationConfig(
             input_activation=output_activation_qspec,
