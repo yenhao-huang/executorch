@@ -16,6 +16,30 @@ namespace torch {
 namespace executor {
 
 using Tensor = executorch::aten::Tensor;
+using ScalarType = executorch::aten::ScalarType;
+
+namespace {
+// torch accepts float32 batch-norm parameters for a float16/bfloat16 input, so
+// a parameter may carry either the input dtype or float32.
+bool check_batch_norm_param_dtype(
+    const Tensor& in,
+    const Tensor& param,
+    const char* param_name) {
+  if (param.scalar_type() == in.scalar_type()) {
+    return true;
+  }
+  ET_CHECK_OR_RETURN_FALSE(
+      (in.scalar_type() == ScalarType::Half ||
+       in.scalar_type() == ScalarType::BFloat16) &&
+          param.scalar_type() == ScalarType::Float,
+      "%s has dtype %s, which is not usable with an input of dtype %s; expected %s or Float",
+      param_name,
+      ::executorch::runtime::toString(param.scalar_type()),
+      ::executorch::runtime::toString(in.scalar_type()),
+      ::executorch::runtime::toString(in.scalar_type()));
+  return true;
+}
+} // namespace
 
 bool check_batch_norm_args(
     const Tensor& in,
@@ -28,20 +52,23 @@ bool check_batch_norm_args(
     Tensor& out,
     Tensor& mean_out,
     Tensor& var_out) {
-  // All tensors must be the same dtype
+  // Parameters may be float32 even when the input is float16/bfloat16, which is
+  // what torch does for a module whose parameters were never downcast.
   if (weight.has_value()) {
-    ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, weight.value()));
+    ET_LOG_AND_RETURN_IF_FALSE(
+        check_batch_norm_param_dtype(in, weight.value(), "weight"));
   }
   if (bias.has_value()) {
-    ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, bias.value()));
+    ET_LOG_AND_RETURN_IF_FALSE(
+        check_batch_norm_param_dtype(in, bias.value(), "bias"));
   }
   if (running_mean.has_value()) {
     ET_LOG_AND_RETURN_IF_FALSE(
-        tensors_have_same_dtype(in, running_mean.value()));
+        check_batch_norm_param_dtype(in, running_mean.value(), "running_mean"));
   }
   if (running_var.has_value()) {
     ET_LOG_AND_RETURN_IF_FALSE(
-        tensors_have_same_dtype(in, running_var.value()));
+        check_batch_norm_param_dtype(in, running_var.value(), "running_var"));
   }
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, out));
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, mean_out));

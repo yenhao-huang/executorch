@@ -48,6 +48,58 @@ class OpNativeBatchNormLegitNoTrainingOutTest : public OperatorTest {
         out2);
   }
 
+  // torch keeps float32 batch-norm parameters for a half/bfloat16 input and
+  // returns the input dtype. See
+  // https://github.com/pytorch/executorch/issues/13586.
+  template <executorch::aten::ScalarType DTYPE>
+  void test_float_params_dtype() {
+    torch::executor::testing::TensorFactory<DTYPE> tf;
+    torch::executor::testing::TensorFactory<executorch::aten::ScalarType::Float>
+        tf_float;
+
+    executorch::aten::Tensor input = tf.make(
+        {2, 3, 2},
+        {1.0, -2.0, 0.5, 3.0, -1.5, 2.5, 2.0, 0.0, -3.0, 1.0, 4.0, -0.5});
+    executorch::aten::Tensor weight = tf_float.make({3}, {1.5, -0.5, 2.0});
+    executorch::aten::Tensor bias = tf_float.make({3}, {0.25, 1.0, -0.75});
+    executorch::aten::Tensor running_mean =
+        tf_float.make({3}, {0.5, -1.0, 2.0});
+    executorch::aten::Tensor running_var = tf_float.make({3}, {4.0, 0.25, 1.0});
+
+    // torch reference.
+    executorch::aten::Tensor expected = tf.make(
+        {2, 3, 2},
+        {0.625,
+         -1.625,
+         -0.5,
+         -3,
+         -7.75,
+         0.25,
+         1.375,
+         -0.125,
+         3,
+         -1,
+         3.25,
+         -5.75});
+
+    executorch::aten::Tensor out = tf.zeros({2, 3, 2});
+    executorch::aten::Tensor mean_out = tf.zeros({0});
+    executorch::aten::Tensor invstd_out = tf.zeros({0});
+
+    op_native_batch_norm_legit_no_training_out(
+        input,
+        weight,
+        bias,
+        running_mean,
+        running_var,
+        /*momentum=*/0.1,
+        /*eps=*/1e-5,
+        out,
+        mean_out,
+        invstd_out);
+    EXPECT_TENSOR_CLOSE(out, expected);
+  }
+
   template <executorch::aten::ScalarType DTYPE>
   void test_2d_dtype() {
     torch::executor::testing::TensorFactory<DTYPE> tf;
@@ -1194,4 +1246,12 @@ TEST_F(OpNativeBatchNormLegitNoStatsOutTest, UninitializedMemoryBugTest) {
   EXPECT_TENSOR_CLOSE(out0, out0_expected);
   EXPECT_TENSOR_CLOSE(out1, out1_expected);
   EXPECT_TENSOR_CLOSE(out2, out2_expected);
+}
+
+TEST_F(OpNativeBatchNormLegitNoTrainingOutTest, FloatParamsWithHalfInput) {
+  test_float_params_dtype<executorch::aten::ScalarType::Half>();
+}
+
+TEST_F(OpNativeBatchNormLegitNoTrainingOutTest, FloatParamsWithBFloat16Input) {
+  test_float_params_dtype<executorch::aten::ScalarType::BFloat16>();
 }
