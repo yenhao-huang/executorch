@@ -8,7 +8,7 @@ base:
 model:
   use_kv_cache: True
   use_sdpa_with_kv_cache: True
-  enable_dynamic_shape: False
+  enable_dynamic_shape: True
   dtype_override: fp32
 
 export:

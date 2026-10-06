@@ -4,12 +4,14 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import copy
 import unittest
 from unittest import mock
 
 import torch
 from executorch.examples.models.llama import attention as attention_module
 from executorch.examples.models.llama.attention import ATTENTION_REGISTRY
+from executorch.examples.models.llama.llama_transformer import construct_transformer
 from executorch.examples.models.llama.model_args import ModelArgs
 from executorch.examples.models.llama.norm import RMSNorm
 from executorch.examples.models.llama.rope import Rope
@@ -30,6 +32,72 @@ class Qwen35AttentionTest(unittest.TestCase):
         }
         defaults.update(kwargs)
         return ModelArgs(**defaults)
+
+    def test_hybrid_dynamic_prefill_preserves_outputs_and_states(self):
+        from executorch.extension.llm.custom_ops import custom_ops  # noqa: F401
+
+        torch.manual_seed(0)
+        args = self._make_args(
+            n_layers=4,
+            vocab_size=64,
+            max_seq_len=64,
+            max_context_len=64,
+            use_kv_cache=True,
+            enable_dynamic_shape=True,
+            generate_full_logits=True,
+            use_hf_rope=True,
+            partial_rotary_factor=0.25,
+            use_qk_norm=True,
+            qk_norm_before_rope=True,
+            use_q_gate=True,
+            rms_norm_add_unit_offset=True,
+            linear_key_head_dim=4,
+            linear_value_head_dim=4,
+            linear_num_key_heads=2,
+            linear_num_value_heads=4,
+            layer_types=["linear_attention"] * 3 + ["full_attention"],
+        )
+        model = construct_transformer(args).eval()
+        with torch.no_grad():
+            program = torch.export.export(
+                copy.deepcopy(model),
+                (torch.tensor([[2, 3, 4]]), {"input_pos": torch.tensor([0])}),
+                dynamic_shapes=(
+                    {1: torch.export.Dim("seq_len", min=1, max=63)},
+                    {"input_pos": {}},
+                ),
+                strict=True,
+            ).run_decompositions({})
+            self.assertTrue(
+                any(
+                    node.target == torch.ops.llama.gated_delta_rule.default
+                    for node in program.graph.nodes
+                )
+            )
+            exported = program.module()
+            # One exported graph must handle decode, variable-length prefill,
+            # continuation, and resetting a previously populated state. Length
+            # 33 also covers a sequence spanning the kernel's 32-token boundary.
+            for length, pos in ((1, 0), (2, 1), (5, 3), (33, 0), (7, 33), (1, 0)):
+                with self.subTest(length=length, pos=pos):
+                    tokens = torch.randint(0, args.vocab_size, (1, length))
+                    options = {"input_pos": torch.tensor([pos])}
+                    # The Python recurrence is an independent reference for the
+                    # fused operator retained in the exported graph.
+                    with mock.patch.object(
+                        attention_module, "_get_gated_delta_rule_op", return_value=None
+                    ):
+                        expected = model(tokens, options)
+                    actual = exported(tokens, options)
+                    torch.testing.assert_close(actual, expected, atol=1e-4, rtol=1e-4)
+                    exported_buffers = dict(exported.named_buffers())
+                    for name, buffer in model.named_buffers():
+                        if name.endswith(
+                            ("conv_state", "recurrent_state", "k_cache", "v_cache")
+                        ):
+                            torch.testing.assert_close(
+                                exported_buffers[name], buffer, atol=1e-4, rtol=1e-4
+                            )
 
     def test_qwen35_full_attention_output_proj_is_bias_free(self):
         args = self._make_args(

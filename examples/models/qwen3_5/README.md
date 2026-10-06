@@ -3,7 +3,7 @@
 - `full_attention` layers use gated full attention.
 - `linear_attention` layers use Gated DeltaNet with internal recurrent state.
 
-This first bring-up is **fp32 + static shape** (`enable_dynamic_shape=False`).
+The CPU/XNNPACK recipe uses **fp32 + dynamic sequence length** (`enable_dynamic_shape=True`) for multi-token prefill and single-token decode.
 Currently supported text model sizes: `0.8B`, `2B`, `4B`.
 
 ## Export
@@ -54,6 +54,6 @@ python -m executorch.examples.models.llama.runner.native \
 ## Notes
 - Current path targets CPU/XNNPACK export validation and runner compatibility.
 - `q8da4w` quantization for Qwen3.5 is intentionally deferred to a follow-up.
-- Dynamic-shape export is not enabled yet for Qwen3.5 DeltaNet layers in this path; keep `enable_dynamic_shape=False`.
-- For static-shape exports, `runner.native` falls back to sequential token prefill for multi-token prompts.
+- Dynamic-shape export requires the `llama::gated_delta_rule` custom op. The Python fallback loops over the sequence length and cannot be exported with a dynamic sequence dimension. Use a build that includes the LLM custom ops.
+- Re-export existing static-shape PTEs to use multi-token prefill; their fixed input shape cannot be changed by a runner flag. For single-token static exports, override `model.enable_dynamic_shape=False` and use a runner that supports sequential prefill.
 - Default metadata uses Qwen3.5 special token ids: `get_bos_id=248045`, `get_eos_ids=[248046,248044]`.
