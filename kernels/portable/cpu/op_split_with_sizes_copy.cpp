@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include <executorch/kernels/portable/cpu/util/broadcast_indexes_range.h>
 #include <executorch/kernels/portable/cpu/util/broadcast_util.h>
 #include <executorch/kernels/portable/cpu/util/copy_ops_util.h>
 #include <executorch/runtime/kernel/kernel_includes.h>
@@ -123,14 +124,14 @@ void split_with_sizes_copy_out(
               {target_out_strides, target_out_ndim});
 
           // For each element in the out tensor, find its corresponding index
-          // in the input tensor and copy it over
-          for (const auto ix : c10::irange(out_tensor.numel())) {
-            size_t out_coord[kTensorDimensionLimit];
-            delinearize_index(ix, out_tensor, out_coord, kTensorDimensionLimit);
-
-            size_t in_linear_index = linearize_access_indexes(
-                out_coord, out_tensor.dim(), target_shape, target_strides);
-
+          // in the input chunk and copy it over. The chunk is not a Tensor, so
+          // its shape and strides go in as a BroadcastShape; that keeps the
+          // division and modulo of delinearize_index out of the loop.
+          for (const auto [ix, in_linear_index] :
+               BroadcastShapeIndexesRange<
+                   1,
+                   /*support_noncontiguous_input_tensors=*/true>(
+                   out_tensor, BroadcastShape(target_shape, target_strides))) {
             out_data[ix] =
                 convert<CTYPE_OUT, CTYPE_IN>(in_data[in_linear_index]);
           }

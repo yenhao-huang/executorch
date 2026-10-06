@@ -12,10 +12,13 @@
 
 #include <gtest/gtest.h>
 
+using executorch::aten::ArrayRef;
 using executorch::aten::ScalarType;
 using executorch::aten::Tensor;
 using executorch::runtime::testing::TensorFactory;
 using torch::executor::BroadcastIndexesRange;
+using torch::executor::BroadcastShape;
+using torch::executor::BroadcastShapeIndexesRange;
 using torch::executor::delinearize_index;
 using torch::executor::linearize_access_indexes;
 
@@ -263,4 +266,51 @@ TEST(BroadcastIndexesRangeTest, FourDBroadcasting) {
 TEST(BroadcastIndexesRangeTest, FourDBroadcastingWithOneDimsInOutput) {
   four_d_broadcasting_test<2, 3, 1, 5>();
   four_d_broadcasting_test<2, 1, 3, 1>();
+}
+
+// BroadcastShapeIndexesRange: the shape to loop over need not belong to any
+// tensor. See https://github.com/pytorch/executorch/issues/8965.
+TEST(BroadcastShapeIndexesRangeTest, ShapeNotBackedByATensor) {
+  TensorFactory<ScalarType::Int> tf;
+  // Neither input carries the full broadcast shape, which is what forces a
+  // standalone shape here.
+  Tensor a = tf.zeros({3, 1});
+  Tensor b = tf.zeros({1, 4});
+  const Tensor::SizesType broadcast_sizes[2] = {3, 4};
+  const BroadcastShape broadcast_shape(
+      ArrayRef<Tensor::SizesType>(broadcast_sizes, 2));
+
+  size_t count = 0;
+  for (const auto [out_idx, a_idx, b_idx] :
+       BroadcastShapeIndexesRange<2>(broadcast_shape, a, b)) {
+    const auto row = count / 4;
+    const auto col = count % 4;
+    EXPECT_EQ(out_idx, static_cast<ssize_t>(count));
+    EXPECT_EQ(a_idx, static_cast<ssize_t>(row));
+    EXPECT_EQ(b_idx, static_cast<ssize_t>(col));
+    ++count;
+  }
+  EXPECT_EQ(count, 12u);
+}
+
+TEST(BroadcastShapeIndexesRangeTest, StridesNotBackedByATensor) {
+  TensorFactory<ScalarType::Int> tf;
+  Tensor out = tf.zeros({2, 3});
+  // A row vector broadcast along the first dim, described only by sizes and
+  // strides.
+  const Tensor::SizesType in_sizes[2] = {1, 3};
+  const Tensor::StridesType in_strides[2] = {3, 1};
+
+  size_t count = 0;
+  for (const auto [out_idx, in_idx] :
+       BroadcastShapeIndexesRange<1, /*support_noncontiguous=*/true>(
+           out,
+           BroadcastShape(
+               ArrayRef<Tensor::SizesType>(in_sizes, 2),
+               ArrayRef<Tensor::StridesType>(in_strides, 2)))) {
+    EXPECT_EQ(out_idx, static_cast<ssize_t>(count));
+    EXPECT_EQ(in_idx, static_cast<ssize_t>(count % 3));
+    ++count;
+  }
+  EXPECT_EQ(count, 6u);
 }
