@@ -148,6 +148,9 @@ inline bool check_transpose_copy_args(
     int64_t dim1,
     Tensor& out) {
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, out));
+  // The kernel builds the expected out size in a kTensorDimensionLimit-wide
+  // array.
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(in));
   ET_LOG_AND_RETURN_IF_FALSE(tensor_has_dim(in, dim0));
   ET_LOG_AND_RETURN_IF_FALSE(tensor_has_dim(in, dim1));
   return true;

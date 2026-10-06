@@ -607,6 +607,10 @@ bool check_constant_pad_args(
 
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_rank(in, out));
 
+  // The kernel collects sizes and strides into kTensorDimensionLimit-wide
+  // arrays.
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(in));
+
   ET_CHECK_OR_RETURN_FALSE(
       pad.size() % 2 == 0,
       "Padding array must be a multiple of 2; pad.size() = %zu",
