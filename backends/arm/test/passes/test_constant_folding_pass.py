@@ -72,3 +72,47 @@ def test_constant_folding_preserves_mutable_buffer_read() -> None:
     assert not any(
         name.startswith("_frozen_param") for name, _ in graph_module.named_buffers()
     )
+
+
+class TrainableParameterModel(torch.nn.Module):
+    """A per-channel scale, the shape QAT needs to keep trainable."""
+
+    def __init__(self, num_channels: int = 3) -> None:
+        super().__init__()
+        self.num_channels = num_channels
+        self.scale = torch.nn.Parameter(torch.ones(num_channels))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        shape = [1] * x.dim()
+        shape[1] = self.num_channels
+        return x * self.scale.view(shape)
+
+
+def _export_trainable_module() -> torch.fx.GraphModule:
+    return torch.export.export(
+        TrainableParameterModel(),
+        (torch.ones(1, 3, 2, 2),),
+    ).module(check_guards=False)
+
+
+def test_constant_folding_folds_trainable_parameter_by_default() -> None:
+    graph_module = _export_trainable_module()
+
+    result = ConstantFoldingPass()(graph_module)
+
+    assert result is not None
+    assert result.modified
+    assert not _contains_target(graph_module, torch.ops.aten.view.default)
+
+
+def test_constant_folding_preserves_trainable_parameter_when_asked() -> None:
+    """Folding the view of a trainable parameter freezes it and drops it from
+    model.parameters(), which leaves a QAT optimizer with an empty parameter
+    list. See https://github.com/pytorch/executorch/issues/20148.
+    """
+    graph_module = _export_trainable_module()
+
+    ConstantFoldingPass(preserve_trainable_parameters=True)(graph_module)
+
+    assert _contains_target(graph_module, torch.ops.aten.view.default)
+    assert len(list(graph_module.parameters())) == 1

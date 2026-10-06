@@ -16,6 +16,13 @@ class ConstantFoldingPass(ArmPass):
 
     To be used before to_edge transform.
 
+    Args:
+        preserve_trainable_parameters (bool): Leave subgraphs that read a
+            parameter with ``requires_grad`` alone. Folding such a subgraph
+            freezes the parameter at its current value and drops it from
+            ``model.parameters()``, which breaks a QAT loop; set this when
+            preparing for QAT.
+
     """
 
     _passes_required_after: Set[Type[ExportPass]] = set()
@@ -31,6 +38,31 @@ class ConstantFoldingPass(ArmPass):
         torch.ops.aten.conv3d.padding,
         torch.ops.aten.conv_transpose2d.input,
     }
+
+    def __init__(self, *args, preserve_trainable_parameters: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.preserve_trainable_parameters = preserve_trainable_parameters
+
+    def _reads_trainable_parameter(
+        self, graph_module: torch.fx.GraphModule, node: torch.fx.Node
+    ) -> bool:
+        """Whether `node`'s value is computed from a parameter being trained."""
+        seen: Set[torch.fx.Node] = set()
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if current.op == "get_attr":
+                attr = getattr(graph_module, current.target, None)  # type: ignore[arg-type]
+                if isinstance(attr, torch.nn.Parameter) and attr.requires_grad:
+                    return True
+                continue
+            stack.extend(
+                arg for arg in current.all_input_nodes if isinstance(arg, torch.fx.Node)
+            )
+        return False
 
     def _ensure_param_attr(
         self, graph_module: torch.fx.GraphModule, node: torch.fx.Node | None
@@ -52,7 +84,13 @@ class ConstantFoldingPass(ArmPass):
 
     def call(self, graph_module: torch.fx.GraphModule) -> PassResult:
         before_graph = str(graph_module.graph)
-        constant_fold(graph_module)
+        constraint_fn = None
+        if self.preserve_trainable_parameters:
+
+            def constraint_fn(node: torch.fx.Node) -> bool:
+                return not self._reads_trainable_parameter(graph_module, node)
+
+        constant_fold(graph_module, constraint_fn)
 
         modified = before_graph != str(graph_module.graph)
 
