@@ -363,6 +363,8 @@
 
 - op: scatter_add.out
 
+- op: scatter_reduce.two_out
+
 - op: select_copy.int_out
 
 - op: select_scatter.out
