@@ -27,12 +27,51 @@ For the AOT flow, compilation of a model to `.pte` format using the Ethos-U back
 - [TOSA Serialization Library](https://gitlab.arm.com/tosa/tosa-tools) for serializing the Exir IR graph into TOSA IR.
 - [Ethos-U Vela graph compiler](https://pypi.org/project/ethos-u-vela/) for compiling TOSA flatbuffers into an Ethos-U command stream.
 
+Both are published on PyPI, so the AOT flow needs no build from source and no
+EULA. Installing the `ethos_u` extra of the ExecuTorch wheel brings them in:
+
+```bash
+pip install "executorch[ethos_u]"
+```
+
+This is enough to quantize a model with `EthosUQuantizer` — post-training or
+quantization-aware — and to lower it to a `.pte`, which means the quantizer can
+live in an ordinary model-authoring environment alongside your own training
+loop, resolved by your usual lockfile, with no second ExecuTorch checkout:
+
+```python
+import torch
+from executorch.backends.arm.ethosu import EthosUCompileSpec
+from executorch.backends.arm.quantizer import (
+    EthosUQuantizer,
+    get_symmetric_quantization_config,
+)
+from torchao.quantization.pt2e.quantize_pt2e import prepare_qat_pt2e
+
+quantizer = EthosUQuantizer(EthosUCompileSpec(target="ethos-u55-128"))
+quantizer.set_global(get_symmetric_quantization_config(is_qat=True))
+prepared = prepare_qat_pt2e(torch.export.export(model, inputs).module(), quantizer)
+# ... your own QAT loop, then convert_pt2e and lower to .pte as usual.
+```
+
+```{note}
+`backends/arm/requirements-arm-tosa.txt`, which the source setup installs with
+`--no-dependencies`, pins `flatbuffers == 24.3.25`, while `tosa-tools 2026.5.0`
+itself requires `flatbuffers == 25.2.10`. The two cannot be resolved together,
+so a normal `pip install` of the extra gives you 25.2.10. Both work, but if you
+pin `flatbuffers` yourself, pin what `tosa-tools` asks for rather than what the
+requirements file says.
+```
+
 And for building and running the example application available in `examples/arm/executor_runner/` through the standalone CMake entry point:
 - [Arm GNU Toolchain](https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain) for cross compilation.
 - [Arm&reg; Corstone&trade; SSE-300 FVP](https://developer.arm.com/documentation/100966/1128/Arm--Corstone-SSE-300-FVP) for testing on a Arm&reg; Cortex&reg;-M55+Ethos-U55 reference design.
 - [Arm&reg; Corstone&trade; SSE-320 FVP](https://developer.arm.com/documentation/109760/0000/SSE-320-FVP) for testing on a Arm&reg; Cortex&reg;-M85+Ethos-U85 reference design.
 
 Fixed Virtual Platforms (FVPs) are freely available emulators provided by Arm for easy embedded development without the need for a physical development board.
+
+Only this second group needs a source checkout; everything in the AOT flow above
+comes from the wheel.
 
 ## Using the Arm Ethos-U Backend
 
