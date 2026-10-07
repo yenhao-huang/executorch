@@ -284,6 +284,7 @@ set(all_test_sources
     "op_scalar_tensor_test.cpp"
     "op_scatter_test.cpp"
     "op_scatter_add_test.cpp"
+    "op_sort_test.cpp"
     "op_select_scatter_test.cpp"
     "op_select_copy_test.cpp"
     "op_sigmoid_test.cpp"
