@@ -868,23 +868,65 @@ def get_quant_weight_transform(
     )
 
 
+def _torchao_aten_lib_candidate_dirs():
+    """Directories that may hold a built torchao ops library, in search order."""
+    import os
+
+    dirs = []
+
+    # An explicit install prefix wins; this is the only location the lookup
+    # used to consider, and with CMAKE_INSTALL_PREFIX unset it resolved to
+    # "./lib" relative to the current directory, which is never right.
+    prefix = os.environ.get("CMAKE_INSTALL_PREFIX")
+    if prefix:
+        dirs.append(os.path.join(prefix, "lib"))
+
+    # The default install prefix used by the build instructions, relative to the
+    # ExecuTorch root rather than to the current directory.
+    executorch_root = Path(__file__).resolve().parents[4]
+    dirs.append(str(executorch_root / "cmake-out" / "lib"))
+
+    # A torchao wheel that ships prebuilt ops.
+    try:
+        import torchao
+
+        torchao_root = Path(torchao.__file__).resolve().parent
+        dirs.append(str(torchao_root / "experimental" / "lib"))
+        dirs.append(str(torchao_root / "lib"))
+    except ImportError:
+        pass
+
+    # Deduplicate while keeping the order.
+    return list(dict.fromkeys(dirs))
+
+
 def _load_torchao_aten_lib(libname):
     import glob
     import os
 
-    libs = glob.glob(
-        os.path.abspath(
-            os.path.join(
-                os.environ.get("CMAKE_INSTALL_PREFIX", ""),
-                f"lib/{libname}.*",
-            )
-        )
+    searched = _torchao_aten_lib_candidate_dirs()
+    for directory in searched:
+        libs = sorted(glob.glob(os.path.join(directory, f"{libname}.*")))
+        if libs:
+            if len(libs) > 1:
+                logging.warning(
+                    "Found %d candidates for %s in %s; loading %s.",
+                    len(libs),
+                    libname,
+                    directory,
+                    libs[0],
+                )
+            logging.info("Loading custom ops library: %s", libs[0])
+            torch.ops.load_library(libs[0])
+            return
+
+    raise FileNotFoundError(
+        f"Could not find the torchao ops library {libname}. Looked in: "
+        + ", ".join(searched)
+        + ". Build it with the torchao ops enabled (see "
+        "examples/models/llama/README.md, 'Running with low-bit kernels'), or "
+        "set CMAKE_INSTALL_PREFIX to the prefix you installed it under."
     )
-    assert (
-        len(libs) == 1
-    ), f"Expected 1 library but got {len(libs)}.  If you installed the torchao ops in a non-standard location, please set CMAKE_INSTALL_PREFIX correctly."
-    logging.info(f"Loading custom ops library: {libs[0]}")
-    torch.ops.load_library(libs[0])
 
 
 # We want to do compute the actual ops in the computation dtype, since the precision of the
