@@ -21,6 +21,10 @@ bool check_gather_args(
     Tensor& out) {
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, out));
   ET_LOG_AND_RETURN_IF_FALSE(tensor_has_dim(in, dim));
+  // The kernel delinearizes indexes into kTensorDimensionLimit-wide arrays.
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(in));
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(index));
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(out));
   ET_CHECK_OR_RETURN_FALSE(
       index.scalar_type() == ScalarType::Long,
       "Expected dtype int64 for index; index.scalar_type() = %s",
@@ -67,6 +71,8 @@ bool check_index_select_args(
     const Tensor& index,
     Tensor& out) {
   ET_LOG_AND_RETURN_IF_FALSE(tensor_has_dim(in, dim));
+  // The kernel builds the target size in a kTensorDimensionLimit-wide array.
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(in));
   dim = dim < 0 ? dim + nonzero_dim(in) : dim;
   ET_CHECK_OR_RETURN_FALSE(
       nonempty_size(in, dim) > 0,
@@ -153,6 +159,11 @@ bool check_scatter_add_args(
     Tensor& out) {
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(self, out));
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(self, src));
+  // The kernel delinearizes indexes into kTensorDimensionLimit-wide arrays.
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(self));
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(index));
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(src));
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(out));
   ET_CHECK_OR_RETURN_FALSE(
       index.scalar_type() == ScalarType::Long,
       "Expected dtype int64 for index; index.scalar_type() = %s",

@@ -84,6 +84,11 @@ bool check_cat_args(
   // Ensure the input tensors list is non-empty
   ET_LOG_AND_RETURN_IF_FALSE(tensors.size() > 0);
 
+  // The kernel builds the target size in a kTensorDimensionLimit-wide array.
+  for (const auto i : c10::irange(tensors.size())) {
+    ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(tensors[i]));
+  }
+
   // Find the first non-empty tensor in the list to use as a reference
   size_t ref_i = 0;
   for (const auto i : c10::irange(tensors.size())) {

@@ -377,3 +377,7 @@ def define_common_targets():
     _common_op_test("op_view_copy_test", ["aten", "portable"])
     _common_op_test("op_where_test", ["aten", "portable"])
     _common_op_test("op_zeros_test", ["aten", "portable"])
+
+    # Guards against kernels overrunning kTensorDimensionLimit-wide stack
+    # arrays. Portable only: the ATen kernels have their own bounds.
+    _common_op_test("over_rank_tensor_test", ["portable"])

@@ -57,6 +57,8 @@ bool check_slice_copy_args(
     int64_t step,
     Tensor& out) {
   ET_LOG_AND_RETURN_IF_FALSE(in.dim() > 0);
+  // The kernel builds the target size in a kTensorDimensionLimit-wide array.
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_rank_is_within_limit(in));
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, out));
   ET_LOG_AND_RETURN_IF_FALSE(tensor_has_dim(in, dim));
   ET_CHECK_OR_RETURN_FALSE(

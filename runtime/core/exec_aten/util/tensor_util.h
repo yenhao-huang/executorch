@@ -648,6 +648,22 @@ inline bool tensor_has_rank_smaller_or_equal_to(
   return true;
 }
 
+/**
+ * Many kernels delinearize an index into a stack array of
+ * `kTensorDimensionLimit` entries, and nothing in the runtime caps a tensor's
+ * rank, so a tensor of higher rank would overrun that array. A kernel that
+ * indexes such an array has to check first.
+ */
+inline bool tensor_rank_is_within_limit(const executorch::aten::Tensor& t) {
+  ET_CHECK_OR_RETURN_FALSE(
+      static_cast<size_t>(t.dim()) <= kTensorDimensionLimit,
+      "Tensor rank %zu is above the kernel limit of %zu",
+      static_cast<size_t>(t.dim()),
+      kTensorDimensionLimit);
+
+  return true;
+}
+
 inline bool tensor_has_dim(executorch::aten::Tensor t, int64_t d) {
   if (t.dim() == 0) {
     ET_CHECK_OR_RETURN_FALSE(
@@ -1405,6 +1421,7 @@ using ::executorch::ET_RUNTIME_NAMESPACE::
 using ::executorch::ET_RUNTIME_NAMESPACE::tensor_is_floating_type;
 using ::executorch::ET_RUNTIME_NAMESPACE::tensor_is_integral_type;
 using ::executorch::ET_RUNTIME_NAMESPACE::tensor_is_rank;
+using ::executorch::ET_RUNTIME_NAMESPACE::tensor_rank_is_within_limit;
 using ::executorch::ET_RUNTIME_NAMESPACE::tensor_is_real_type;
 using ::executorch::ET_RUNTIME_NAMESPACE::tensor_is_realh_type;
 using ::executorch::ET_RUNTIME_NAMESPACE::tensor_is_realhb_type;
