@@ -371,12 +371,22 @@ class ToOutVarPass(PassBase):
                 continue
             elif target in to_out_var_skiplist:
                 continue
-            elif _get_overload_schema(target).kind() == SchemaKind.inplace:
-                continue
+            # Check the target's type before asking for its schema. A target
+            # that is not an op overload — a higher-order operator this pass
+            # does not handle, such as the `out_dtype` that the PT2E reference
+            # representation emits — has no `_schema`, and reaching for one
+            # raised an AttributeError naming an internal attribute instead of
+            # the error below naming the operator.
             if not isinstance(
                 target, (torch._ops.OpOverload, EdgeOpOverload, BackendOpOverload)
             ):
                 raise RuntimeError(f"Require an op overload for target: {target}")
+
+            # _get_overload_schema returns None for the few schemas torchgen
+            # cannot parse, which are not inplace variants.
+            target_schema = _get_overload_schema(target)
+            if target_schema is not None and target_schema.kind() == SchemaKind.inplace:
+                continue
 
             op_name = target._schema.name
             overload_name = target._schema.overload_name
