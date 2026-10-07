@@ -15,6 +15,9 @@ from coremltools.optimize.torch.quantization.quantization_config import (
 )
 
 from executorch.backends.apple.coreml.quantizer import CoreMLQuantizer
+from executorch.backends.apple.coreml.quantizer._annotation_config import (
+    AnnotationConfig,
+)
 from torch.export import export
 
 from torchao.quantization.pt2e.fake_quantize import FakeQuantizeBase
@@ -163,6 +166,80 @@ class TestCoreMLQuantizer:
             example_inputs,
             quantization_type,
         )
+
+
+class TestCoreMLQuantizerWeightBits:
+    """A sub-byte weight_dtype such as "qint4" reaches ExecuTorch as an int8
+    dtype plus weight_n_bits=4, so reading only the dtype silently produced
+    8-bit weights. See https://github.com/pytorch/executorch/issues/9649.
+    """
+
+    @staticmethod
+    def _config(weight_dtype, weight_per_channel: bool = True):
+        return LinearQuantizerConfig.from_dict(
+            {
+                "global_config": {
+                    "quantization_scheme": QuantizationScheme.symmetric,
+                    "activation_dtype": torch.float32,
+                    "weight_dtype": weight_dtype,
+                    "weight_per_channel": weight_per_channel,
+                }
+            }
+        )
+
+    @pytest.mark.parametrize(
+        "weight_dtype,expected_range",
+        [
+            ("qint4", (-8, 7)),
+            ("quint4", (0, 15)),
+            (torch.qint8, (-128, 127)),
+            (torch.quint8, (0, 255)),
+        ],
+    )
+    def test_weight_quant_range_follows_n_bits(self, weight_dtype, expected_range):
+        annotation_config = AnnotationConfig.from_quantization_config(
+            self._config(weight_dtype).global_config
+        )
+        weight = annotation_config.weight
+        assert (weight.quant_min, weight.quant_max) == expected_range
+
+    @pytest.mark.parametrize("weight_per_channel", [True, False])
+    def test_four_bit_weights_use_sixteen_levels(self, weight_per_channel):
+        class Linear(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc = torch.nn.Linear(32, 8, bias=False)
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                return self.fc(x)
+
+        torch.manual_seed(0)
+        model = Linear().eval()
+        inputs = (torch.randn(4, 32),)
+
+        quantizer = CoreMLQuantizer(self._config("qint4", weight_per_channel))
+        prepared = prepare_pt2e(export(model, inputs).module(), quantizer)
+        prepared(*inputs)
+        converted = convert_pt2e(prepared)
+
+        int_weights = None
+        graph_range = None
+        buffers = dict(converted.named_buffers())
+        for node in converted.graph.nodes:
+            if node.op == "call_function" and "dequantize_per" in str(node.target):
+                source = node.args[0]
+                int_weights = buffers.get(source.target, None)
+                if int_weights is None:
+                    int_weights = getattr(converted, source.target)
+                graph_range = (node.args[-3], node.args[-2])
+                break
+
+        assert int_weights is not None, "no dequantize node in the converted graph"
+        assert graph_range == (-8, 7)
+        assert int_weights.min() >= -8
+        assert int_weights.max() <= 7
+        # 4 bits is 16 levels; the 8-bit path uses far more than that.
+        assert len(torch.unique(int_weights)) <= 16
 
 
 if __name__ == "__main__":
