@@ -143,15 +143,24 @@ def quantize(  # noqa C901
         from torchao.quantization.granularity import PerAxis, PerGroup
         from torchao.utils import unwrap_tensor_subclass
 
+        # Keyed by fqn so a module visited more than once is counted once.
+        quantized_linears: Dict[str, int] = {}
+        skipped_linears: Dict[str, int] = {}
+
         def filter_fn(m, fqn):
             if not isinstance(m, nn.Linear):
                 return False
             parts = fqn.split(".")
             if "lora_a" in parts or "lora_b" in parts:
                 return False
-            if group_size == 0:
+            in_features = m.weight.shape[1]
+            if group_size == 0 or in_features % group_size == 0:
+                quantized_linears[fqn] = in_features
                 return True
-            return m.weight.shape[1] % group_size == 0
+            # A group-wise scheme cannot cover a row that the group size does
+            # not divide, so this layer stays in its original dtype.
+            skipped_linears[fqn] = in_features
+            return False
 
         weight_dtype = torch.int4 if qmode == "8da4w" else torch.int8
         quantize_(
@@ -170,6 +179,31 @@ def quantize(  # noqa C901
             filter_fn=filter_fn,
         )
         # TODO: deal with checkpoint / computation dtype decoupling.
+
+        logging.info(
+            "%s: quantized %d linear layer(s) with group_size %s, skipped %d.",
+            qmode,
+            len(quantized_linears),
+            group_size,
+            len(skipped_linears),
+        )
+        if skipped_linears:
+            sample = ", ".join(
+                f"{fqn} (in_features={in_features})"
+                for fqn, in_features in list(skipped_linears.items())[:8]
+            )
+            if len(skipped_linears) > 8:
+                sample += ", ..."
+            logging.warning(
+                "%s left %d linear layer(s) in their original dtype because "
+                "in_features is not a multiple of group_size %d: %s. Use a "
+                "group_size that divides them, or group_size 0 for per-axis "
+                "quantization, to include these layers.",
+                qmode,
+                len(skipped_linears),
+                group_size,
+                sample,
+            )
 
         if verbose:
             print("quantized model:", model)

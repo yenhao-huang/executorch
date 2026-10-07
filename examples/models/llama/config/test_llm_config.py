@@ -88,6 +88,12 @@ class TestValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             QuantizationConfig(qmode="unknown")
 
+    def test_8da8w_is_accepted(self):
+        # The 8da4w/8da8w path in quantize.py handles 8da8w, so the config has
+        # to let it through. See
+        # https://github.com/pytorch/executorch/issues/22044.
+        self.assertEqual(QuantizationConfig(qmode="8da8w").qmode, "8da8w")
+
     def test_invalid_coreml_ios(self):
         with self.assertRaises(ValueError):
             CoreMLConfig(ios=14)
