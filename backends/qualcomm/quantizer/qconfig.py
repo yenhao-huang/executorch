@@ -45,6 +45,21 @@ class QuantizationConfig:
     per_channel_embedding: bool = False
 
 
+def _default_weight_eps(weight_dtype) -> float:
+    """The scale floor that matches a weight width.
+
+    Flooring an 8-bit per-channel scale at the 16-bit eps leaves a channel that
+    BatchNorm all but zeroed with a scale orders of magnitude below its
+    neighbours, which the HTP then computes as garbage even though host
+    fake-quant stays correct.
+    """
+    return (
+        DEFAULT_EPS_16BIT
+        if weight_dtype in {torch.int16, torch.uint16}
+        else DEFAULT_EPS_8BIT
+    )
+
+
 def _derived_bias_quant_spec(node: Node) -> DerivedQuantizationSpec:
     def _derive_bias_qparams_fn(
         obs_or_fqs: List,
@@ -612,6 +627,11 @@ def get_ptq_per_channel_quant_config(
 ) -> QuantizationConfig:
     # the smallest defaults to DEFAULT_EPS_16BIT
     extra_args: Dict[str, Any] = {"eps": eps if eps else DEFAULT_EPS_16BIT}
+    # The weight observer takes the floor that matches the weight width, not the
+    # activation width.
+    weight_extra_args: Dict[str, Any] = {
+        "eps": eps if eps else _default_weight_eps(weight_dtype)
+    }
     supported_act_types = {
         torch.uint8,
         torch.uint16,
@@ -670,7 +690,9 @@ def get_ptq_per_channel_quant_config(
         quant_max=q_max,
         qscheme=torch.per_channel_symmetric,
         ch_axis=ch_axis,
-        observer_or_fake_quant_ctr=PerChannelParamObserver.with_args(**extra_args),
+        observer_or_fake_quant_ctr=PerChannelParamObserver.with_args(
+            **weight_extra_args
+        ),
     )
 
     bias_quantization_spec = _derived_bias_quant_spec
@@ -693,13 +715,16 @@ def get_ptq_per_block_quant_config(
     ch_axis: int = 0,
     eps: float = None,
 ) -> QuantizationConfig:
-    # the smallest defaults to DEFAULT_EPS_16BIT
-    extra_args: Dict[str, Any] = {"eps": eps if eps else DEFAULT_EPS_16BIT}
+    # The weight observer takes the floor that matches the weight width.
+    extra_args: Dict[str, Any] = {
+        "eps": eps if eps else _default_weight_eps(weight_dtype)
+    }
     quantization_config = get_ptq_per_channel_quant_config(
         act_dtype=act_dtype,
         weight_dtype=weight_dtype,
         act_observer=act_observer,
         act_symmetric=act_symmetric,
+        eps=eps,
     )
     weight_quantization_spec = QuantizationSpec(
         dtype=torch.int8 if weight_dtype == torch.int4 else weight_dtype,
@@ -971,6 +996,12 @@ def get_qat_per_channel_quant_config(
         extra_args: Dict[str, Any] = {"eps": eps if eps else DEFAULT_EPS_8BIT}
     else:
         extra_args: Dict[str, Any] = {"eps": eps if eps else DEFAULT_EPS_16BIT}
+    # The weight observer takes the floor that matches the weight width, not the
+    # activation width, so 16a8w does not floor its 8-bit weights at the 16-bit
+    # eps.
+    weight_extra_args: Dict[str, Any] = {
+        "eps": eps if eps else _default_weight_eps(weight_dtype)
+    }
     supported_act_types = {
         torch.uint8,
         torch.uint16,
@@ -1026,7 +1057,7 @@ def get_qat_per_channel_quant_config(
         quant_max=7 if weight_dtype == torch.int4 else torch.iinfo(weight_dtype).max,
         qscheme=torch.per_channel_symmetric,
         ch_axis=ch_axis,
-        observer=PerChannelParamObserver.with_args(**extra_args),
+        observer=PerChannelParamObserver.with_args(**weight_extra_args),
     )
     weight_quantization_spec = QuantizationSpec(
         dtype=torch.int8 if weight_dtype == torch.int4 else weight_dtype,
