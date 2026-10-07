@@ -82,6 +82,17 @@ def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
 def apply_rotary_emb(
     xq: torch.Tensor, xk: torch.Tensor, freqs_cos: torch.Tensor, freqs_sin: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Rotate xq and xk by the precomputed angles.
+
+    Rotation pairs adjacent elements of the head dim, (x[2i], x[2i+1]), and the
+    angle for pair i at position p is p / theta ** (2i / head_dim).
+
+    The arithmetic runs in float32 whatever the inputs are, and the result is
+    cast back to the input dtype. Recomputing this outside the model in float32
+    therefore disagrees by the input dtype's resolution rather than by
+    float32's: about 4e-4 for float16 and 5e-3 for bfloat16 inputs, against
+    1e-7 for float32. See https://github.com/pytorch/executorch/issues/5170.
+    """
     xq_r, xq_i = xq.float().reshape(xq.shape[:-1] + (-1, 2)).unbind(-1)
     xk_r, xk_i = xk.float().reshape(xk.shape[:-1] + (-1, 2)).unbind(-1)
 
@@ -102,6 +113,7 @@ def apply_rotary_emb(
 def apply_rotary_emb_to_k(
     xk: torch.Tensor, freqs_cos: torch.Tensor, freqs_sin: torch.Tensor
 ) -> torch.Tensor:
+    """As apply_rotary_emb, for xk alone. The same dtype note applies."""
     xk_r, xk_i = xk.float().reshape(xk.shape[:-1] + (-1, 2)).unbind(-1)
 
     freqs_cos = reshape_for_broadcast(freqs_cos, xk_r)
