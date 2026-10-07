@@ -78,6 +78,7 @@ from executorch.exir._warnings import experimental
 from torch.fx import GraphModule, Node
 from torchao.quantization.pt2e import (
     FakeQuantize,
+    FakeQuantizeBase,
     FusedMovingAvgObsFakeQuantize,
     HistogramObserver,
     MinMaxObserver,
@@ -590,6 +591,48 @@ def _for_each_filtered_node(
     for node in model.graph.nodes:
         if filter_fn(node):
             yield node
+
+
+def _config_uses_fake_quantization(config: Optional[QuantizationConfig]) -> bool:
+    """Whether a config quantizes with fake quantization, i.e. targets QAT.
+
+    This is how `get_symmetric_quantization_config(is_qat=True)` differs from
+    the PTQ configuration: its specs construct FakeQuantize rather than an
+    observer.
+    """
+    if config is None:
+        return False
+    for spec in (config.input_activation, config.output_activation, config.weight):
+        ctr = getattr(spec, "observer_or_fake_quant_ctr", None)
+        if ctr is None:
+            continue
+        # Specs hold a _PartialWrapper around the class to construct.
+        partial = getattr(ctr, "p", None)
+        cls = getattr(partial, "func", ctr)
+        if isinstance(cls, type) and issubclass(cls, FakeQuantizeBase):
+            return True
+    return False
+
+
+def _any_config_uses_fake_quantization(quantizer) -> bool:
+    """Whether any config set on `quantizer` targets QAT."""
+
+    def configs():
+        # A composable quantizer refuses some of these, and which ones it has
+        # depends on the quantizer version, so read each defensively.
+        for name in ("global_config", "io_config"):
+            try:
+                yield getattr(quantizer, name, None)
+            except NotImplementedError:
+                continue
+        for name in ("module_type_config", "module_name_config"):
+            try:
+                mapping = getattr(quantizer, name, None) or {}
+            except NotImplementedError:
+                continue
+            yield from mapping.values()
+
+    return any(_config_uses_fake_quantization(config) for config in configs())
 
 
 class TOSAQuantizer(Quantizer):
@@ -1131,7 +1174,13 @@ class _TOSAQuantizerV1(Quantizer):
 
         with _prefer_table_for_quantized_leaky_relu(self.compile_spec):
             pass_manager = ArmPassManager(self.compile_spec)
-            return pass_manager.transform_for_annotation_pipeline(graph_module=model)
+            return pass_manager.transform_for_annotation_pipeline(
+                graph_module=model,
+                # Folding a subgraph that reads a trainable parameter freezes
+                # that parameter and drops it from model.parameters(), which
+                # leaves a QAT optimizer with nothing to train.
+                preserve_trainable_parameters=_any_config_uses_fake_quantization(self),
+            )
 
     def annotate(self, model: GraphModule) -> GraphModule:
         model = self._annotate_for_static_quantization_config(model)
@@ -1379,7 +1428,10 @@ The following nodes are not marked for quantization and will not be decomposed i
 
         with _prefer_table_for_quantized_leaky_relu(self.compile_spec):
             pass_manager = ArmPassManager(self.compile_spec)
-            transformed_model = pass_manager.transform_for_annotation_pipeline(model)
+            transformed_model = pass_manager.transform_for_annotation_pipeline(
+                model,
+                preserve_trainable_parameters=_any_config_uses_fake_quantization(self),
+            )
 
         # Remove the temporary annotations
         return self._remove_annotations(transformed_model)

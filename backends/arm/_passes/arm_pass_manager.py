@@ -788,12 +788,18 @@ class ArmPassManager(ExportedProgramPassManager):
         with self._tosa_context(graph_module):
             return self._tosa_pipeline(exported_program, graph_module)
 
-    def transform_for_annotation_pipeline(self, graph_module: GraphModule):
+    def transform_for_annotation_pipeline(
+        self, graph_module: GraphModule, preserve_trainable_parameters: bool = False
+    ):
         with self._tosa_context(graph_module):
             # Preprocessing passes
             self.add_pass(RemoveGraphAssertsPass(tfa_pass=True))
             self.add_pass(RemoveRedundantTypeAsPass())
-            self.add_pass(ConstantFoldingPass())
+            self.add_pass(
+                ConstantFoldingPass(
+                    preserve_trainable_parameters=preserve_trainable_parameters
+                )
+            )
 
             # Transformation passes (pre scalar -> tensor)
             self.add_passes(
