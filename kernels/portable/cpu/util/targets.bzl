@@ -211,6 +211,7 @@ def define_common_targets():
         srcs = ["kernel_ops_util.cpp"],
         exported_headers = [
             "kernel_ops_util.h",
+            "avg_pool_util.h",
         ],
         compiler_flags = select({
             "DEFAULT": ["-Wno-missing-prototypes"],
