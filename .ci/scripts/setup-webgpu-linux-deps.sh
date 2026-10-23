@@ -37,13 +37,14 @@ _ss_dir=/tmp/swiftshader
 # ubuntu-latest prebuilt is built with a bleeding-edge GCC: it references
 # libstdc++ symbols newer than ubuntu-22.04's default (e.g. _M_replace_cold,
 # GCC 13+), so the static .a won't link against the stock runtime. Pull a current
-# libstdc++ from the ubuntu-toolchain-r PPA when the symbol floor isn't met. All
+# libstdc++ from the ubuntu-toolchain-r PPA outside conda when needed. All
 # of this is scoped to the WebGPU CI job; newer libstdc++ is backward-compatible.
 if command -v apt-get >/dev/null 2>&1; then
   _SUDO=""; command -v sudo >/dev/null 2>&1 && _SUDO="sudo"
   ${_SUDO} apt-get update -y || true
   ${_SUDO} apt-get install -y libvulkan1 software-properties-common || true
-  if ! strings /usr/lib/x86_64-linux-gnu/libstdc++.so.6 2>/dev/null \
+  if ! command -v conda >/dev/null 2>&1 && \
+    ! strings /usr/lib/x86_64-linux-gnu/libstdc++.so.6 2>/dev/null \
       | grep -q "GLIBCXX_3.4.32"; then
     ${_SUDO} add-apt-repository -y ppa:ubuntu-toolchain-r/test || true
     ${_SUDO} apt-get update -y || true
@@ -56,8 +57,13 @@ fi
 # for the vulkan op tests. Upgrade the conda runtime libstdc++ so the loaded
 # libstdc++.so.6 (conda's, not the system one) satisfies Dawn at run time.
 if command -v conda >/dev/null 2>&1; then
-  conda install -y -c conda-forge "libstdcxx-ng>=14" || true
+  conda install -y -c conda-forge "libstdcxx-ng>=14"
 fi
+
+# Installing conda's runtime does not change Clang's default linker search path.
+# Select it for both linking and loading, and fail before downloading/building
+# Dawn or SwiftShader if the compiler still cannot use the required symbol.
+source "$(dirname "${BASH_SOURCE[0]}")/setup-webgpu-cxx-runtime.sh"
 
 # --- Dawn: official prebuilt from GitHub (no S3) ------------------------------
 mkdir -p "${_dawn_dir}"
