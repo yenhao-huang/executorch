@@ -367,6 +367,52 @@ lib.define(
 lib.impl(name, linear_dq8ca_q4gsw, "CompositeExplicitAutograd")
 linear_dq8ca_q4gsw_op = getattr(getattr(torch.ops, namespace), name)
 
+
+def linear_dq8ca_q8csw(
+    x: torch.Tensor,
+    weights: torch.Tensor,
+    weight_sums: torch.Tensor,
+    weight_scales: torch.Tensor,
+    bias: Optional[torch.Tensor] = None,
+    quant_min: int = -128,
+    quant_max: int = 127,
+):
+    block_size = [1] * (x.dim() - 1) + [x.shape[-1]]
+    scales, zeros = torch.ops.torchao.choose_qparams_affine.default(
+        x,
+        "ASYMMETRIC",
+        block_size,
+        torch.int8,
+        quant_min,
+        quant_max,
+        torch.finfo(torch.float32).eps,
+        torch.float32,
+        torch.int32,
+    )
+    quantized = torch.ops.torchao.quantize_affine.default(
+        x, block_size, scales, zeros, torch.int8, quant_min, quant_max
+    )
+    dequantized = torch.ops.torchao.dequantize_affine.default(
+        quantized,
+        block_size,
+        scales,
+        zeros,
+        torch.int8,
+        quant_min,
+        quant_max,
+        output_dtype=x.dtype,
+    )
+    weights = weights.to(x.dtype) * weight_scales[: weights.shape[0], None]
+    return torch.nn.functional.linear(dequantized, weights, bias)
+
+
+name = "linear_dq8ca_q8csw"
+lib.define(
+    f"{name}(Tensor x, Tensor weights, Tensor weight_sums, Tensor weight_scales, "
+    "Tensor? bias=None, int quant_min=-128, int quant_max=127) -> Tensor"
+)
+lib.impl(name, linear_dq8ca_q8csw, "CompositeExplicitAutograd")
+
 #################
 ## qaqw_linear ##
 #################

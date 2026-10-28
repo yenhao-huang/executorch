@@ -1607,3 +1607,118 @@ class TestVulkanPasses(unittest.TestCase):
         replace_pass._exported_program = ep
         with self.assertRaises(RuntimeError):
             replace_pass.call(ep.graph_module)
+
+
+class TestPerTokenInt8LinearFusion(unittest.TestCase):
+    def test_pt2e_per_token_int8_linear_fusion(self):
+        from executorch.backends.vulkan.quantizer.vulkan_quantizer import (
+            get_symmetric_quantization_config,
+            VulkanQuantizer,
+        )
+
+        for shape, bias in product(
+            [(12,), (1, 4), (5, 32), (2, 3, 64), (2, 2, 3, 12)], [False, True]
+        ):
+            with self.subTest(shape=shape, bias=bias):
+                torch.manual_seed(42)
+                x = torch.randn(shape)
+                model = torch.nn.Linear(shape[-1], 13, bias=bias).eval()
+                prepared = prepare_pt2e(
+                    torch.export.export(model, (x,)).module(),
+                    VulkanQuantizer().set_global(
+                        get_symmetric_quantization_config(is_dynamic=True)
+                    ),
+                )
+                prepared(x)
+                converted = convert_pt2e(prepared)
+                edge = to_edge(
+                    torch.export.export(converted, (x,)),
+                    compile_config=EdgeCompileConfig(_check_ir_validity=False),
+                )
+                ep = edge.exported_program()
+                fusion = FusePatternsPass()
+                fusion._exported_program = ep
+                result = fusion(ep.graph_module)
+                nodes = list(result.graph_module.graph.nodes)
+                self.assertEqual(
+                    sum(
+                        n.target == exir_ops.edge.et_vk.linear_dq8ca_q8csw.default
+                        for n in nodes
+                    ),
+                    1,
+                )
+                self.assertFalse(any("choose_qparams" in str(n.target) for n in nodes))
+                inputs = ep._graph_module_flat_inputs((x,), {})
+                actual = result.graph_module(*inputs)[0]
+                torch.testing.assert_close(actual, converted(x), rtol=1e-5, atol=1e-5)
+
+    def test_per_token_int8_fusion_rejects_different_semantics(self):
+        from executorch.backends.vulkan.quantizer.vulkan_quantizer import (
+            get_symmetric_quantization_config,
+            VulkanQuantizer,
+        )
+
+        for change in (
+            "epsilon",
+            "weight_axis",
+            "weight_layout",
+            "alpha",
+            "output_dtype",
+        ):
+            with self.subTest(change=change):
+                x = torch.randn(3, 8)
+                prepared = prepare_pt2e(
+                    torch.export.export(torch.nn.Linear(8, 8).eval(), (x,)).module(),
+                    VulkanQuantizer().set_global(
+                        get_symmetric_quantization_config(is_dynamic=True)
+                    ),
+                )
+                prepared(x)
+                converted = convert_pt2e(prepared)
+                edge = to_edge(
+                    torch.export.export(converted, (x,)),
+                    compile_config=EdgeCompileConfig(_check_ir_validity=False),
+                )
+                ep = edge.exported_program()
+                for node in ep.graph_module.graph.nodes:
+                    if (
+                        change == "epsilon"
+                        and node.target
+                        == exir_ops.edge.torchao.choose_qparams_affine.default
+                    ):
+                        args = list(node.args)
+                        args[6] = 0.01
+                        node.args = tuple(args)
+                    elif (
+                        change == "weight_axis"
+                        and node.target
+                        == exir_ops.edge.quantized_decomposed.dequantize_per_channel.default
+                    ):
+                        args = list(node.args)
+                        args[3] = 1
+                        node.args = tuple(args)
+                    elif (
+                        change == "weight_layout"
+                        and node.target == exir_ops.edge.aten.permute_copy.default
+                    ):
+                        node.args = (node.args[0], [0, 1])
+                    elif (
+                        change == "alpha"
+                        and node.target == exir_ops.edge.aten.addmm.default
+                    ):
+                        node.kwargs = {"alpha": 2}
+                    elif (
+                        change == "output_dtype"
+                        and node.target
+                        == exir_ops.edge.torchao.dequantize_affine.default
+                    ):
+                        node.kwargs = {"output_dtype": torch.float16}
+                fusion = FusePatternsPass()
+                fusion._exported_program = ep
+                result = fusion(ep.graph_module)
+                self.assertFalse(
+                    any(
+                        n.target == exir_ops.edge.et_vk.linear_dq8ca_q8csw.default
+                        for n in result.graph_module.graph.nodes
+                    )
+                )

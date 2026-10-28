@@ -14,7 +14,6 @@ from torchao.quantization.pt2e.quantizer import (
     annotate_input_qspec_map,
     annotate_output_qspec,
     get_bias_qspec,
-    get_input_act_qspec,
     get_output_act_qspec,
     get_weight_qspec,
     QuantizationAnnotation,
@@ -95,7 +94,11 @@ def _annotate_linear(
     filter_fn: Optional[Callable[[Node], bool]] = None,
 ) -> Optional[list[list[Node]]]:
     annotated_partitions = []
-    input_act_qspec = get_input_act_qspec(quantization_config)
+    input_act_qspec = (
+        quantization_config.input_activation
+        if quantization_config is not None
+        else None
+    )
     output_act_qspec = get_output_act_qspec(quantization_config)
     weight_qspec = get_weight_qspec(quantization_config)
     bias_qspec = get_bias_qspec(quantization_config)

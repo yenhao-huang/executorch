@@ -19,12 +19,17 @@ from executorch.backends.vulkan.quantizer.vulkan_quantizer_utils import (
     propagate_annotation,
 )
 from torch.fx import Node
+from torchao.quantization.granularity import PerToken
 from torchao.quantization.pt2e import PerChannelMinMaxObserver, PlaceholderObserver
+from torchao.quantization.pt2e._affine_quantization import (
+    AffineQuantizedPlaceholderObserver,
+)
 from torchao.quantization.pt2e.quantizer import (
     QuantizationConfig,
     QuantizationSpec,
     Quantizer,
 )
+from torchao.quantization.quant_primitives import MappingType
 
 
 __all__ = [
@@ -42,6 +47,7 @@ def get_symmetric_quantization_config(
     act_qmax: Optional[int] = None,
     weight_qmin: Optional[int] = None,
     weight_qmax: Optional[int] = None,
+    act_per_token: Optional[bool] = None,
 ) -> QuantizationConfig:
     """
     Return a QuantizationConfig for Vulkan quantizer.
@@ -49,13 +55,15 @@ def get_symmetric_quantization_config(
     Args:
         is_dynamic: If False, weight-only quantization. If True, dynamic
             quantization (activation + weight), with the activation scale
-            computed per tensor at runtime
+            computed per token for INT8 weights and per tensor for INT4 weights.
         weight_bits: Number of bits for weight quantization (4 or 8)
         act_bits: Number of bits for activation quantization (8)
         act_qmin: Minimum quantization value for activations (auto-calculated if None)
         act_qmax: Maximum quantization value for activations (auto-calculated if None)
         weight_qmin: Minimum quantization value for weights (auto-calculated if None)
         weight_qmax: Maximum quantization value for weights (auto-calculated if None)
+        act_per_token: Override activation granularity. False retains per-tensor
+            dynamic quantization. Per-token activation fusion requires INT8 weights.
     """
     assert weight_bits in {
         8,
@@ -89,32 +97,31 @@ def get_symmetric_quantization_config(
         act_quantization_spec = None
         output_activation_spec = None
     else:
-        # Dynamic quantization: a choose_qparams op computes one scale and
-        # zero point for the whole activation tensor at runtime, and the
-        # quantize/dequantize pair around the linear carries them. Per tensor,
-        # not per token, whatever the granularity of the surrounding graph.
-        #
-        # (The fused et_vk.linear_q8ta_q8csw kernel is a different path: it is
-        # matched when the input scale is a static scalar, not one chosen at
-        # runtime.)
-        #
-        # One scale for the whole tensor is a poor fit for transformer
-        # encoders, where a few outlier channels set it for everything else; on
-        # sentence-transformer models this costs an order of magnitude more
-        # accuracy than a per-token scheme. Prefer is_dynamic=False (weight
-        # only) when output fidelity matters.
         # Auto-calculate activation ranges if not provided
         if act_qmin is None or act_qmax is None:
             act_range = bits_to_range(act_bits)
             act_qmin = act_qmin if act_qmin is not None else act_range[0]
             act_qmax = act_qmax if act_qmax is not None else act_range[1]
 
+        if act_per_token is None:
+            act_per_token = weight_bits == 8
         act_observer_or_fake_quant_ctr = PlaceholderObserver
+        if act_per_token:
+            act_observer_or_fake_quant_ctr = (
+                AffineQuantizedPlaceholderObserver.with_args(
+                    mapping_type=MappingType.ASYMMETRIC,
+                    target_dtype=torch.int8,
+                    granularity=PerToken(),
+                    eps=torch.finfo(torch.float32).eps,
+                    scale_dtype=torch.float32,
+                    zero_point_dtype=torch.int32,
+                )
+            )
         act_quantization_spec = QuantizationSpec(
             dtype=torch.int8,
             quant_min=act_qmin,
             quant_max=act_qmax,
-            qscheme=torch.per_tensor_affine,
+            qscheme=None if act_per_token else torch.per_tensor_affine,
             is_dynamic=True,
             observer_or_fake_quant_ctr=act_observer_or_fake_quant_ctr,
         )

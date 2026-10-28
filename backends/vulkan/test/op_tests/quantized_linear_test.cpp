@@ -250,3 +250,92 @@ TEST_F(VulkanLinearQCS4WTest, test_vulkan_impl_gemm) {
       /*K = */ 32,
       /*N = */ 32);
 }
+
+TEST(VulkanPerTokenInt8Test, IntegerDotAndFallback) {
+  using namespace vkcompute;
+  auto* adapter = api::context()->adapter_ptr();
+  for (const bool disable_dot : {false, true}) {
+    vkapi::AdapterCapabilityOverrides overrides;
+    if (disable_dot) {
+      overrides =
+          vkapi::AdapterCapabilityOverrides::without_dot_product_support();
+    }
+    vkapi::ScopedAdapterCapabilityOverride override(adapter, overrides);
+    const std::vector<int64_t> features{
+        4, 64, 256, 4 * (int64_t(adapter->max_texture2d_dim()) + 1)};
+    for (const int64_t K : features) {
+      for (const bool with_bias : {false, true}) {
+        SCOPED_TRACE(
+            ::testing::Message() << "K=" << K << " bias=" << with_bias
+                                 << " disable_dot=" << disable_dot);
+        at::manual_seed(22431);
+        auto x = at::randn({2, 5, K});
+        x[0][0].zero_();
+        x[0][1].fill_(1e-8);
+        x[1][4].mul_(100);
+        auto weights = at::randint(-128, 128, {7, K}, at::kChar);
+        auto sums = weights.to(at::kInt).sum(1).to(at::kInt);
+        auto scales = at::rand({7}) * 0.01;
+        auto bias = at::randn({7});
+        auto lo = at::amin(x, {-1}, true).clamp_max(0);
+        auto hi = at::amax(x, {-1}, true).clamp_min(0);
+        auto scale = ((hi - lo) / 255).clamp_min(1.1920928955078125e-7);
+        auto zero = (-128 - (lo / scale).round()).clamp(-128, 127);
+        auto q = (x * scale.reciprocal()).round().add(zero).clamp(-128, 127);
+        auto reference = at::linear(
+            (q - zero) * scale, weights.to(at::kFloat) * scales.unsqueeze(1));
+        if (with_bias) {
+          reference += bias;
+        }
+
+        GraphConfig config;
+        config.external_adapter = adapter;
+        ComputeGraph graph(config);
+        if (disable_dot) {
+          ASSERT_FALSE(graph.can_use_int8_dot_product());
+        }
+        auto input = graph.add_input_tensor(
+            x.sizes().vec(),
+            vkapi::kFloat,
+            utils::kBuffer,
+            utils::kWidthPacked);
+        auto output = graph.add_tensor(
+            reference.sizes().vec(),
+            vkapi::kFloat,
+            utils::kBuffer,
+            utils::kWidthPacked);
+        auto weight_ref = graph.add_tensorref(
+            weights.sizes().vec(), vkapi::kChar, weights.const_data_ptr());
+        auto sum_ref = graph.add_tensorref(
+            sums.sizes().vec(), vkapi::kInt, sums.const_data_ptr());
+        auto scale_ref = graph.add_tensorref(
+            scales.sizes().vec(), vkapi::kFloat, scales.const_data_ptr());
+        auto bias_ref = with_bias
+            ? graph.add_tensorref(
+                  bias.sizes().vec(), vkapi::kFloat, bias.const_data_ptr())
+            : graph.add_none();
+        VK_GET_OP_FN("et_vk.linear_dq8ca_q8csw.default")
+        (graph,
+         {input.value,
+          weight_ref,
+          sum_ref,
+          scale_ref,
+          bias_ref,
+          graph.add_scalar<int64_t>(-128),
+          graph.add_scalar<int64_t>(127),
+          output});
+        auto staging = graph.set_output_tensor(output);
+        graph.prepare();
+        graph.prepack();
+        graph.propagate_resize();
+        graph.maybe_cast_and_copy_into_staging(
+            input.staging, x.const_data_ptr(), x.numel(), vkapi::kFloat);
+        graph.execute();
+        auto actual = at::empty_like(reference);
+        graph.maybe_cast_and_copy_from_staging(
+            staging, actual.mutable_data_ptr(), actual.numel(), vkapi::kFloat);
+        ASSERT_TRUE(at::allclose(actual, reference, 2e-4, 2e-4));
+      }
+    }
+  }
+}

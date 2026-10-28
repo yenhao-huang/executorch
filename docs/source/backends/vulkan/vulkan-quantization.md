@@ -85,9 +85,21 @@ etvk_program = to_edge_transform_and_lower(
 
 ### 8-bit quantization with PT2E quantization
 
-For 8-bit quantized linear layers, currently the only quantization scheme
-supported is weight only quantization, with weights that are symmetrically
-quantized to 8 bits with per output channel quantization scales.
+For 8-bit quantized linear layers, Vulkan supports weight-only quantization and
+dynamic per-token activation quantization. Both use symmetric INT8 weights with
+per-output-channel scales.
+
+`get_symmetric_quantization_config(is_dynamic=True, weight_bits=8)` computes
+independent asymmetric INT8 activation scales and zero points over the last
+(feature) dimension of each token. The converted host graph and Vulkan delegate
+both apply activation quantization. The Vulkan implementation supports float32
+inputs with feature counts divisible by four, batched inputs, and optional bias.
+It computes integer products on Vulkan even on devices without accelerated
+integer dot products. Performance depends on the device and matrix dimensions.
+
+Use `act_per_token=False` to retain the previous per-tensor dynamic activation
+behavior. `is_dynamic=False` remains weight-only, and the default INT4
+configuration is unchanged.
 
 To access this quantization mode, the PT2E quantization flow must be used. At a
 high level, the steps to quantize a model are:
