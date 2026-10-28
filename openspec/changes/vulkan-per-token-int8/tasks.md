@@ -18,4 +18,4 @@
 
 - [x] 4.1 Run baseline/fixed regression and relevant adjacent INT4, static and weight-only tests; investigate encoder quality/latency if prerequisites permit; update acceptance report with exact outcomes.
 - [x] 4.2 Review full diff, run lint and OpenSpec validation, resolve findings, and record file changes.
-- [ ] 4.3 Commit and push only to fork, verify branch and separate PR URL, inspect CI/review, and update STATE/report.
+- [x] 4.3 Commit and push only to fork, verify branch and separate PR URL, inspect CI/review, and update STATE/report.
