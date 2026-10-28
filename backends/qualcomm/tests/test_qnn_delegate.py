@@ -4806,6 +4806,35 @@ class TestQNNQuantizedOperator(TestQNN):
                 module = self.get_qdq_module(module, sample_input)
                 self.lower_module_and_test_output(module, sample_input)
 
+    def test_qnn_backend_shared_gather_rope(self):
+        if self.backend != "htp":
+            self.skipTest("16a8w gathered RoPE regression targets HTP")
+        self.atol = 0.1
+        self.rtol = 0.01
+        for heads, length, dim in [(6, 320, 128), (2, 65, 64)]:
+            with self.subTest(shape=(heads, length, dim)):
+                torch.manual_seed(0)
+                module = SharedGatherRoPE(dim).eval()  # noqa: F405
+
+                def sample(heads=heads, length=length, dim=dim):
+                    return (
+                        torch.randn(heads, length, dim) * 3,
+                        torch.randn(heads, length, dim) * 3,
+                        torch.arange(length, dtype=torch.int32),
+                    )
+
+                inputs = sample()
+                quantizer = make_quantizer(
+                    quant_dtype=QuantDtype.use_16a8w, soc_model=self.soc_model
+                )
+                prepared = prepare_pt2e(
+                    torch.export.export(module, inputs).module(), quantizer
+                )
+                for _ in range(8):
+                    prepared(*sample())
+                quantized = convert_pt2e(prepared)
+                self.lower_module_and_test_output(quantized, inputs)
+
     def test_qnn_backend_index_copy(self):
         test_comb = [
             {

@@ -1507,6 +1507,26 @@ class Index(torch.nn.Module):
         return self.dispatcher[self.axis](x)
 
 
+class SharedGatherRoPE(torch.nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+        angles = torch.arange(2048).float()[:, None] / 1e6 ** (
+            torch.arange(0, dim, 2).float() / dim
+        )
+        self.register_buffer("cos_t", torch.cat([angles.cos(), angles.cos()], -1))
+        self.register_buffer("sin_t", torch.cat([angles.sin(), angles.sin()], -1))
+
+    def rope(self, x, cos, sin):
+        rotated = torch.cat([-x[..., self.dim // 2 :], x[..., : self.dim // 2]], -1)
+        return x * cos + rotated * sin
+
+    def forward(self, x0, x1, pos):
+        cos, sin = self.cos_t[pos.long()], self.sin_t[pos.long()]
+        k0 = self.rope(x0, cos, sin)
+        return k0, torch.bmm(k0, x0.transpose(1, 2)), self.rope(x1, cos, sin)
+
+
 class IndexCopy(torch.nn.Module):
     def __init__(self, copy_dim=1, skip_mutable_buffer=False):
         super().__init__()
