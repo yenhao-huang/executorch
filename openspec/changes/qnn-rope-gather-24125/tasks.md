@@ -16,7 +16,7 @@
 ## 3. Review and delivery
 
 - [x] 3.1 Review complete diff, validate OpenSpec and run relevant lint/tests; reconcile file changes and acceptance status.
-- [ ] 3.2 Commit and publish reviewed work only to the designated fork; verify remote branch and PR URL, checks and outstanding blockers.
+- [x] 3.2 Commit and publish reviewed work only to the designated fork; verify remote branch and PR URL, checks and outstanding blockers. Fork PR 45 is open; no CI checks reported; physical acceptance blocked.
 
 ## Workflow follow-up
 

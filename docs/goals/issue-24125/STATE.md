@@ -8,7 +8,9 @@ Repository: yenhao-huang/executorch (writes); pytorch/executorch (reads)
 Issue: [ExecuTorch 24125](https://redirect.github.com/pytorch/executorch/issues/24125)
 Branch: agent/fix-24125
 Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
-Pull request: none
+Pull request: https://github.com/yenhao-huang/executorch/pull/45
+Code commit: d8abc695424429666e203b285a7a963f4c873179
+Delivery: fork branch and open PR verified; physical-device acceptance blocked
 Report: docs/howard/24125.md
 OpenSpec: openspec/changes/qnn-rope-gather-24125
 
@@ -20,9 +22,9 @@ Last updated: 2026-10-28
 | 1. Check Prior Discussion For Existing Resolution | completed | ../logs/{issue-current,comments,timeline,linked-search,commit-search}.json | Open; zero comments/events; no linked fix found |
 | 2. Read Issue And Repository Context | completed | AGENTS.md, CONTRIBUTING.md, required skills, parent-notes.md | No physical device or existing SDK supplied |
 | 3. Implement And Test | completed (emulator) | ../logs/regression-baseline-final.log, regression-fixed.log, regression-fixed-2.47.log | Both SDKs reproduce; equivalent GatherNd fixes original model; physical acceptance blocked |
-| 4. Review And Commit | in_progress | ../logs/lint-all-files.log, buck-parity-ready.log; full diff review | Minimal builder fix; scoped lint, strict OpenSpec and Buck pass |
-| 5. Open And Follow Through On PR | pending | | Fork only; no upstream references except redirect host |
-| 6. Report Result | in_progress | docs/howard/24125.md | Physical SM8850 acceptance blocked |
+| 4. Review And Commit | completed | ../logs/lint-all-files.log, buck-parity-ready.log, precommit-verified.log | Code commit d8abc69542; CMake recheck passes |
+| 5. Open And Follow Through On PR | completed (fork delivery) | ../logs/push-feature.log, pr-readback.json, fork-runs.json | PR 45 open, remote head verified; no checks/reviews yet |
+| 6. Report Result | completed (qualified) | docs/howard/24125.md | Emulator correction verified; physical SM8850 acceptance blocked |
 
 ## Environment and commands
 
@@ -172,8 +174,27 @@ parity recheck with --skip_linux_android --no_clean --job_number 8 exits 0
 Final registered suite (regression plus both adjacent index tests) exits 0,
 three tests. Scoped all-file lint exits 0; OpenSpec strict validation exits 0.
 
-Fork main is 449 commits behind the required baseline. Delivery will use a new
-fork base branch base/upstream-main-390bc0618f at the exact baseline, so the PR
-contains only this issue. No default branch updates or rebases are planned.
-Only the feature/base branches and fork PR are authorized destinations. New
-outgoing text must use redirect.github.com for all community references.
+## Fork delivery milestone
+
+Fork main is 449 commits behind the required baseline. Created fork base branch
+base/upstream-main-390bc0618f at the exact baseline, without changing main.
+Pushed agent/fix-24125 normally and verified both remote refs with git ls-remote.
+GitHub compare confirms one code commit and exactly the 11 reviewed issue files.
+Created and read back https://github.com/yenhao-huang/executorch/pull/45:
+OPEN, non-draft, correct head/base, no comments/reviews/checks at publication.
+Fork Actions is enabled, but no runs exist for this branch at this checkpoint;
+do not describe CI as passed. No settings or approvals were changed.
+
+The first commit hook could not find venv lintrunner on PATH. It was subsequently
+run explicitly with the venv active and task-local XDG_DATA_HOME; exit 0, no lint
+issues or patches. Final metadata commit also uses the active venv/hook.
+Generated empty OpenSpec .gitkeep placeholders were removed; no change was archived.
+Only scoped files were staged. New diff, commit messages and PR body were inspected
+for unsafe community references; all issue links use redirect.github.com.
+
+Final upstream read remains open, comments=0, updated_at=2026-10-23T17:16:54Z
+(issue-final-read.json). No upstream posts, PRs, reactions or other writes occurred.
+No merges, force pushes, branch deletions, security changes or license acceptance.
+Parent owns daily reporting. AC-4 remains blocked until an authorized physical
+SM8850/HTPv81 run; the report contains device commands. Fork delivery is complete,
+but full hardware acceptance is not claimed.
