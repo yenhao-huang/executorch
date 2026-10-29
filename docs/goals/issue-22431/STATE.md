@@ -9,9 +9,10 @@ Issue: https://redirect.github.com/pytorch/executorch/issues/22431
 Branch: agent/fix-22431
 Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
 Pull request: https://github.com/yenhao-huang/executorch/pull/46 (OPEN, non-draft)
-Implementation commit: 5bb3afb4119823d75e6af9a8d9d60661516226e3
+Initial implementation commit: 5bb3afb4119823d75e6af9a8d9d60661516226e3
+Review fix commit: 7f295b497a7aad79130ce23e0124a6427b145001 (fork branch and PR head verified)
 Fork PR base: base/upstream-main-390bc0618f at 390bc0618f19276e699a255bd035a35c5296cfa8
-Outcome: in_progress — addressing independent Claude review; parent coordinates acceptance
+Outcome: in_progress — revision pushed and verified; parent Claude re-review pending
 OpenSpec: openspec/changes/vulkan-per-token-int8
 Report: docs/howard/22431.md
 Logs: ../logs/
@@ -24,8 +25,8 @@ Last updated: 2026-10-29
 | 1. Check Prior Discussion For Existing Resolution | completed | issue-current.json, issue-comments.json, issue-timeline.json, pr-22432.json, pr-22372.json | Open, no comments; linked corrections do not resolve feature |
 | 2. Read Issue And Repository Context | completed | required skills, AGENTS.md, CONTRIBUTING.md, OpenSpec proposal/design/spec | No community writes |
 | 3. Implement And Test | completed | claude-review/full-regression.log, claude-review/cpp-runtime-final.log | Review fixes: 50 Python tests and 32 INT8 C++ cases passed; before/fixed runtime regression 2 failures to 3 passes. |
-| 4. Review And Commit | in_progress | claude-review/review.md | Confirmed half/dispatch issues fixed; lintrunner, diff check and OpenSpec passed; committing revision. |
-| 5. Open And Follow Through On PR | in_progress | claude-review/pr-before.json | Existing fork PR 46 verified; revision push and parent Claude re-review pending. |
+| 4. Review And Commit | completed | claude-review/commit.log, claude-review/lint.log, claude-review/openspec-validate.log | Confirmed half/dispatch issues fixed; lint, commit hook, diff check and OpenSpec passed. |
+| 5. Open And Follow Through On PR | in_progress | claude-review/fork-branch-readback.txt, claude-review/pr-code-readback.json | Revision 7f295b497a pushed normally and PR 46 head verified; parent Claude re-review pending. |
 | 6. Report Result | in_progress | docs/howard/22431.md | Review evidence updated; independent acceptance pending; physical-GPU/encoder limits retained. |
 
 Setup limitation: Eigen GitLab clone repeatedly fails remotely; retry or use build configuration that does not require optimized kernels. No security settings changed.
@@ -40,7 +41,7 @@ Delivery milestone: implementation commit 5bb3afb4119823d75e6af9a8d9d60661516226
 
 ## Claude review revision, 2026-10-29
 
-Reviewed head 00f4af4228501c60ca97b4cf036d3d0ae459013e. Read parent review and reproduced both confirmed bugs with registered pytest cases: force_fp16 fails kFloat assertion; 65536 tokens exceeds workgroup limits (2 failed, 1 multi-consumer dynamic test passed; logs/claude-review/registered-before.log). Implementing typed half shader variants with FP32 qparams/arithmetic and bounded grid-stride row loops. Required workflow docs retained. Remaining tentative rank-one matching scope narrowed to per-channel INT8 weights. Claude acceptance remains pending parent review.
+Reviewed head 00f4af4228501c60ca97b4cf036d3d0ae459013e. Read parent review and reproduced both confirmed bugs with registered pytest cases: force_fp16 fails kFloat assertion; 65536 tokens exceeds workgroup limits (2 failed, 1 multi-consumer dynamic test passed; logs/claude-review/registered-before.log). Implemented typed half shader variants with FP32 qparams/arithmetic and bounded grid-stride row loops. Required workflow docs retained. Remaining tentative rank-one matching scope narrowed to per-channel INT8 weights. Claude acceptance remains pending parent review.
 
 Revision milestone: force_fp16 uses typed half storage and float32 qparams; both
 shaders bound row dispatch and loop across excess tokens. Dynamic large-token
@@ -51,3 +52,5 @@ static passed; enabled INT4 retains identical seven baseline mismatches. Broader
 C++ INT4 missing-shader and sporadic CPU-reference failures reproduce with
 baseline test source; detailed limits and logs are in the report. Required
 workflow docs remain. Parent owns the next Claude pass and final acceptance.
+
+Review handoff: implementation revision 7f295b497a verified on fork PR 46; no GitHub checks or reviews are reported. This documentation follow-up records delivery and remains part of the next parent-reviewed head. Final remote readback is logs/claude-review/pr-final-readback.json under the task parent. No merge or community writes occurred.

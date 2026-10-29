@@ -24,6 +24,5 @@
 
 - [x] 5.1 Preserve force_fp16 storage with typed shader variants and FP32 qparams; reproduce and test before/after.
 - [x] 5.2 Support token counts beyond dispatch limits, including dynamic growth; retain multi-consumer coverage.
-- [ ] 5.3 Run adjacent and fallback checks, lint, update evidence, push PR 46, and hand final head to parent for Claude re-review.
-
+- [x] 5.3 Run adjacent and fallback checks, lint, update evidence, push PR 46, and hand final head to parent for Claude re-review.
 - [ ] 5.4 Parent runs independent Claude CLI on the final pushed revision; address further legitimate findings until accepted.
