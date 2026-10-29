@@ -36,6 +36,7 @@ from executorch.backends.vulkan.op_registry import (
 )
 
 from executorch.backends.vulkan.patterns import PatternMatch
+from executorch.backends.vulkan.patterns.quantized_linear import QuantizedLinearMatch
 
 from executorch.backends.vulkan.serialization.vulkan_graph_schema import (
     VkMemoryLayout,
@@ -128,6 +129,51 @@ class VulkanSupportedOperators(OperatorSupportBase):
         self.nn_module_blocklist = nn_module_blocklist
         self.nn_module_allowlist = nn_module_allowlist
         self._node_support: Dict[torch.fx.Node, bool] = {}
+
+        # Existing fusions bypass operator filters on their internal nodes. Only
+        # the additional per-token activation absorption uses these stricter checks.
+        token_linears = [
+            match
+            for match in self.fusable_subgraphs
+            if isinstance(match, QuantizedLinearMatch)
+            and match.is_per_token_int8_linear()
+            and all(
+                self._activation_node_is_allowed(node)[0]
+                and self._is_node_supported(node)
+                for node in match.all_nodes
+                if node.op == "call_function"
+            )
+        ]
+        consuming_nodes = {node for match in token_linears for node in match.all_nodes}
+        for match in token_linears:
+            nodes = match.fused_activation_nodes(consuming_nodes)
+            if all(self._activation_node_is_allowed(node)[0] for node in nodes):
+                # Qparams shared only by compatible projections disappear during
+                # fusion, so their standalone texture limits do not apply.
+                self.fusable_nodes.update(nodes)
+                for node in nodes:
+                    self._node_support.pop(node, None)
+
+    def _activation_node_is_allowed(self, node: torch.fx.Node) -> Tuple[bool, str]:
+        if node.target in self.operator_blocklist:
+            return False, "op is in blocklist"
+        if (
+            utils.is_torch_op_node(node)
+            and self.operator_allowlist is not None
+            and node.target not in self.operator_allowlist
+        ):
+            return False, "op is not in allowlist"
+        if self.nn_module_allowlist is not None:
+            if not utils.node_comes_from_any_nn_module_in_set(
+                node, self.nn_module_allowlist
+            ):
+                return False, "source nn.Module is not in allowlist"
+        if self.nn_module_blocklist is not None:
+            if utils.node_comes_from_any_nn_module_in_set(
+                node, self.nn_module_blocklist
+            ):
+                return False, "source nn.Module is in blocklist"
+        return True, ""
 
     def op_node_is_compatible(  # noqa: C901: Function is too complex
         self, node: torch.fx.Node, features: Optional[OpFeatures] = None

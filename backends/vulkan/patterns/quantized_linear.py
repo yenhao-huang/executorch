@@ -99,7 +99,17 @@ class QuantizedLinearMatch(PatternMatch):
         assert isinstance(anchor_primary_input_node, torch.fx.Node)
 
         # Skip potential view_copy between dq and linear
-        if utils.is_view_copy_node(anchor_primary_input_node):
+        if utils.is_view_copy_node(anchor_primary_input_node) or (
+            anchor_primary_input_node.target
+            == exir_ops.edge.aten.unsqueeze_copy.default
+            and self.is_weight_perchannel_quantized()
+            and self.dequantize_weight_node.target
+            == exir_ops.edge.quantized_decomposed.dequantize_per_channel.default
+            and anchor_primary_input_node.args[1] in (0, -2)
+            and anchor_primary_input_node.args[0].meta["val"].dim() == 1
+            and anchor_primary_input_node.args[0].target
+            == exir_ops.edge.torchao.dequantize_affine.default
+        ):
             self.all_nodes.append(anchor_primary_input_node)
             anchor_primary_input_node = anchor_primary_input_node.args[
                 0
@@ -263,7 +273,118 @@ class QuantizedLinearMatch(PatternMatch):
         scales_shape = self.input_scales_node.meta["val"].shape
         input_shape = self.pattern_input_node.meta["val"].shape
 
-        return input_shape[-2] == scales_shape[-1]
+        return len(input_shape) >= 2 and input_shape[-2] == scales_shape[-1]
+
+    def is_input_dynamic_per_token_int8(self) -> bool:
+        q = self.quantize_input_node
+        dq = self.dequantize_input_node
+        if (
+            q is None
+            or dq is None
+            or len(q.args) != 7
+            or len(dq.args) != 7
+            or q.target != exir_ops.edge.torchao.quantize_affine.default
+            or dq.target != exir_ops.edge.torchao.dequantize_affine.default
+        ):
+            return False
+        if tuple(q.args[1:]) != tuple(dq.args[1:]):
+            return False
+        scale, zero = q.args[2:4]
+        if not isinstance(scale, torch.fx.Node) or not isinstance(zero, torch.fx.Node):
+            return False
+        if scale.target != operator.getitem or zero.target != operator.getitem:
+            return False
+        chooser = scale.args[0]
+        if not isinstance(chooser, torch.fx.Node) or len(chooser.args) != 9:
+            return False
+        if zero.args != (chooser, 1) or scale.args[1] != 0:
+            return False
+        if chooser.target != exir_ops.edge.torchao.choose_qparams_affine.default:
+            return False
+        x = self.pattern_input_node
+        shape = x.meta["val"].shape
+        if (
+            x.meta["val"].dtype != torch.float32
+            or dq.kwargs.get("output_dtype", torch.float32) != torch.float32
+            or self.anchor_node.kwargs.get("alpha", 1) != 1
+            or self.anchor_node.kwargs.get("beta", 1) != 1
+        ):
+            return False
+        block_size = [1] * (len(shape) - 1) + [shape[-1]]
+        args = chooser.args
+        return (
+            list(q.args[1]) == block_size
+            and q.args[4] == torch.int8
+            and isinstance(q.args[5], int)
+            and isinstance(q.args[6], int)
+            and -128 <= q.args[5] < q.args[6] <= 127
+            and args[0] == x
+            and args[1] == "ASYMMETRIC"
+            and list(args[2]) == block_size
+            and args[3:6] == q.args[4:7]
+            and args[6:9]
+            == (torch.finfo(torch.float32).eps, torch.float32, torch.int32)
+        )
+
+    def is_weight_linear_layout(self) -> bool:
+        if self.anchor_node.target == exir_ops.edge.aten.linear.default:
+            return self.anchor_node.args[1] == self.dequantize_weight_node
+        if self.anchor_node.target not in (
+            exir_ops.edge.aten.mm.default,
+            exir_ops.edge.aten.addmm.default,
+        ):
+            return False
+        index = 2 if self.anchor_node.target == exir_ops.edge.aten.addmm.default else 1
+        weight = self.anchor_node.args[index]
+        return (
+            weight.target == exir_ops.edge.aten.permute_copy.default
+            and weight.args[0] == self.dequantize_weight_node
+            and list(weight.args[1]) == [1, 0]
+        )
+
+    def is_per_token_int8_linear(self) -> bool:
+        if not self.is_input_dynamic_per_token_int8():
+            return False
+        weight_tensor = self.weight_node.meta["val"]
+        weight_scales_tensor = self.weight_scales_node.meta["val"]
+        weight_dq = self.dequantize_weight_node
+        return (
+            self.is_weight_perchannel_quantized()
+            and self.is_weight_linear_layout()
+            and weight_tensor.dim() == 2
+            and self.pattern_input_node.meta["val"].shape[-1] == weight_tensor.shape[1]
+            and weight_scales_tensor.dtype == torch.float32
+            and (
+                self.bias_node is None
+                or (
+                    self.bias_node.meta["val"].dtype == torch.float32
+                    and self.bias_node.meta["val"].shape == (weight_tensor.shape[0],)
+                )
+            )
+            and weight_dq.target
+            == exir_ops.edge.quantized_decomposed.dequantize_per_channel.default
+            and weight_dq.args[3] == 0
+            and weight_dq.args[6] == torch.int8
+            and weight_dq.kwargs.get("out_dtype") in (None, torch.float32)
+            and weight_tensor.dtype == torch.int8
+        )
+
+    def fused_activation_nodes(
+        self, consuming_nodes: Optional[set[torch.fx.Node]] = None
+    ) -> list[torch.fx.Node]:
+        if not self.is_per_token_int8_linear():
+            return []
+        nodes = [
+            self.quantize_input_node,
+            self.dequantize_input_node,
+            self.input_scales_node,
+            self.input_zeros_node,
+            self.input_scales_node.args[0],
+        ]
+        consumed = set(self.all_nodes) | set(nodes) | (consuming_nodes or set())
+        if any(user not in consumed for node in nodes for user in node.users):
+            return []
+        return nodes
 
 
 linear_anchor_nodes = {
@@ -324,6 +445,47 @@ def compute_per_group_sums(weight_tensor: torch.Tensor, group_size: int):
 ##
 ## Pattern Replacement
 ##
+
+
+def make_linear_dq8ca_q8csw_op(
+    ep: ExportedProgram,
+    graph_module: torch.fx.GraphModule,
+    match: QuantizedLinearMatch,
+    weight_tensor: torch.Tensor,
+):
+    with graph_module.graph.inserting_before(next(iter(graph_module.graph.nodes))):
+        weight_sums_node = create_constant_placeholder(
+            exp_program=ep,
+            graph=graph_module.graph,
+            kind=InputKind.CONSTANT_TENSOR,
+            name=(utils.get_tensor_name(ep, match.weight_node) + "_sums").replace(
+                ".", "_"
+            ),
+            data=weight_tensor.sum(dim=1).to(torch.int32),
+        )
+    with graph_module.graph.inserting_before(match.output_node):
+        qlinear = graph_module.graph.call_function(
+            exir_ops.edge.et_vk.linear_dq8ca_q8csw.default,
+            (
+                match.pattern_input_node,
+                match.weight_node,
+                weight_sums_node,
+                match.weight_scales_node,
+                match.bias_node,
+                *match.quantize_input_node.args[5:7],
+            ),
+        )
+        qlinear.meta["val"] = match.pattern_input_node.meta["val"].new_empty(
+            (*match.pattern_input_node.meta["val"].shape[:-1], weight_tensor.shape[0])
+        )
+        replacement = qlinear
+        if qlinear.meta["val"].shape != match.output_node.meta["val"].shape:
+            replacement = graph_module.graph.call_function(
+                exir_ops.edge.aten.view_copy.default,
+                (qlinear, list(match.output_node.meta["val"].shape)),
+            )
+            replacement.meta["val"] = match.output_node.meta["val"]
+    match.output_node.replace_all_uses_with(replacement)
 
 
 def make_linear_q4gsw_op(
@@ -614,6 +776,14 @@ def replace_quantized_linear_patterns(
     assert weight_zeros_tensor is not None
 
     # Route to appropriate custom op.
+    if match.is_per_token_int8_linear():
+        if not torch.all(weight_zeros_tensor == 0):
+            raise ValueError(
+                "Per-token INT8 Vulkan linear requires weight zero points to be zero"
+            )
+        make_linear_dq8ca_q8csw_op(ep, graph_module, match, weight_tensor)
+        return
+
     if (
         match.is_input_static_per_tensor_quantized()
         and match.is_weight_perchannel_quantized()

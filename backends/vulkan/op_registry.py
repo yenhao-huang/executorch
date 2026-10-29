@@ -530,6 +530,17 @@ def register_linear_dq8ca_q4gsw():
     )
 
 
+@update_features(exir_ops.edge.et_vk.linear_dq8ca_q8csw.default)
+def register_linear_dq8ca_q8csw():
+    return OpFeatures(
+        inputs_storage=[utils.CONTIGUOUS_BUFFER] + [utils.NO_STORAGE] * 6,
+        outputs_storage=utils.CONTIGUOUS_BUFFER,
+        inputs_dtypes={torch.float32},
+        supports_prepacking=True,
+        supports_resize=True,
+    )
+
+
 # =============================================================================
 # QuantizeDequantize.cpp
 # =============================================================================
