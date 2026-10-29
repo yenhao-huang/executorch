@@ -4,8 +4,13 @@
 # LICENSE file in the root directory of this source tree.
 linear_dq8ca_q8csw:
   parameter_names_with_default_values:
+    DTYPE: float
     WEIGHT_STORAGE: texture2d
     USE_DOT: false
+  generate_variant_forall:
+    DTYPE:
+      - VALUE: float
+      - VALUE: half
   shader_variants:
     - NAME: linear_dq8ca_q8csw_texture2d_nodot
     - NAME: linear_dq8ca_q8csw_texture2d_dot

@@ -1722,3 +1722,48 @@ class TestPerTokenInt8LinearFusion(unittest.TestCase):
                         for n in result.graph_module.graph.nodes
                     )
                 )
+
+    def test_per_token_int8_fusion_consumed_qparams(self):
+        from executorch.backends.transforms.utils import get_param_tensor
+        from executorch.backends.vulkan.patterns.quantized_linear import (
+            find_quantized_linear_patterns,
+        )
+        from executorch.backends.vulkan.quantizer.vulkan_quantizer import (
+            get_symmetric_quantization_config,
+            VulkanQuantizer,
+        )
+
+        x = torch.randn(3, 8)
+        prepared = prepare_pt2e(
+            torch.export.export(torch.nn.Linear(8, 8).eval(), (x,)).module(),
+            VulkanQuantizer().set_global(
+                get_symmetric_quantization_config(is_dynamic=True)
+            ),
+        )
+        prepared(x)
+        edge = to_edge(
+            torch.export.export(convert_pt2e(prepared), (x,)),
+            compile_config=EdgeCompileConfig(_check_ir_validity=False),
+        )
+        ep = edge.exported_program()
+        match = next(
+            match
+            for node in ep.graph_module.graph.nodes
+            if (match := find_quantized_linear_patterns(node)) is not None
+        )
+        chooser = match.input_scales_node.args[0]
+        self.assertIn(chooser, match.fused_activation_nodes())
+        self.assertNotIn(match.pattern_input_node, match.fused_activation_nodes())
+        output = next(
+            node for node in ep.graph_module.graph.nodes if node.op == "output"
+        )
+        original_output = output.args
+        output.args = (output.args[0] + (match.input_scales_node,),)
+        self.assertEqual(match.fused_activation_nodes(), [])
+        output.args = original_output
+
+        get_param_tensor(ep, match.weight_zeros_node).fill_(1)
+        fusion = FusePatternsPass()
+        fusion._exported_program = ep
+        with self.assertRaisesRegex(ValueError, "weight zero points to be zero"):
+            fusion(ep.graph_module)

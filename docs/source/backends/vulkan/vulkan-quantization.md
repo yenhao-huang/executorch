@@ -92,8 +92,13 @@ per-output-channel scales.
 `get_symmetric_quantization_config(is_dynamic=True, weight_bits=8)` computes
 independent asymmetric INT8 activation scales and zero points over the last
 (feature) dimension of each token. The converted host graph and Vulkan delegate
-both apply activation quantization. The Vulkan implementation supports float32
-inputs with feature counts divisible by four, batched inputs, and optional bias.
+both apply activation quantization. Lowering supports float32 graphs with positive
+feature counts divisible by four, batched inputs, and optional float32 bias.
+Weights must have zero zero-points and float32 per-output-channel scales.
+The `force_fp16` compile option stores activations, weight scales, bias and outputs
+in half precision; activation qparams and scale arithmetic remain float32, and
+products accumulate in INT32. Token counts can exceed the device's dispatch
+workgroup limit, including during dynamic resizing.
 It computes integer products on Vulkan even on devices without accelerated
 integer dot products. Performance depends on the device and matrix dimensions.
 

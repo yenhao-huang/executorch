@@ -36,6 +36,7 @@ from executorch.backends.vulkan.op_registry import (
 )
 
 from executorch.backends.vulkan.patterns import PatternMatch
+from executorch.backends.vulkan.patterns.quantized_linear import QuantizedLinearMatch
 
 from executorch.backends.vulkan.serialization.vulkan_graph_schema import (
     VkMemoryLayout,
@@ -518,6 +519,12 @@ class VulkanPartitioner(Partitioner):
         fusable_subgraphs = vk_patterns.get_all_fusable_subgraphs(
             exported_program.graph_module
         )
+
+        for match in fusable_subgraphs:
+            if isinstance(match, QuantizedLinearMatch):
+                # These qparams are computed inside the fused buffer op and never
+                # materialized as the standalone chooser's textures.
+                match.all_nodes.extend(match.fused_activation_nodes())
 
         # small_texture_limits opts into the conservative 3D texture limit that is
         # compatible with most desktop/laptop GPUs (the Vulkan spec only guarantees

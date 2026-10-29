@@ -6,6 +6,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <algorithm>
+
 #include <executorch/backends/vulkan/runtime/graph/ops/OperatorRegistry.h>
 #include <executorch/backends/vulkan/runtime/graph/ops/impl/Common.h>
 #include <executorch/backends/vulkan/runtime/graph/ops/impl/Staging.h>
@@ -34,8 +36,12 @@ GlobalWorkGrid token_quantize_gwg(
   const auto input = args.at(1).refs.at(0);
   const uint32_t rows =
       graph->numel_of(input) / graph->size_at<int32_t>(-1, input);
+  const auto max_groups =
+      graph->context()->adapter_ptr()->max_compute_workgroup_count();
   return GlobalWorkGrid(
-      {64u, rows, 1u}, kTiledWorkGrid, LocalWorkGroup(64u, 1u, 1u));
+      {64u, std::min(rows, max_groups[1]), 1u},
+      kTiledWorkGrid,
+      LocalWorkGroup(64u, 1u, 1u));
 }
 
 void resize_token_linear(
@@ -55,7 +61,10 @@ GlobalWorkGrid token_linear_gwg(
   const auto output = args.at(0).refs.at(0);
   const uint32_t N = graph->size_at<uint32_t>(-1, output);
   const uint32_t M = graph->numel_of(output) / N;
-  return GlobalWorkGrid({utils::div_up_4(N), M, 1u}, kTiledWorkGrid);
+  const auto max_groups =
+      graph->context()->adapter_ptr()->max_compute_workgroup_count();
+  return GlobalWorkGrid(
+      {utils::div_up_4(N), std::min(M, max_groups[1]), 1u}, kTiledWorkGrid);
 }
 
 void linear_dq8ca_q8csw(
@@ -73,7 +82,11 @@ void linear_dq8ca_q8csw(
   VK_CHECK_COND(K > 0 && K % 4 == 0);
   const int64_t M = graph.numel_of(input) / K;
   VK_CHECK_COND(qmin >= -128 && qmin < qmax && qmax <= 127);
-  VK_CHECK_COND(graph.dtype_of(input) == vkapi::kFloat);
+  const auto dtype = graph.dtype_of(input);
+  VK_CHECK_COND(dtype == vkapi::kFloat || dtype == vkapi::kHalf);
+  VK_CHECK_COND(
+      graph.dtype_of(output) == dtype && graph.dtype_of(scales) == dtype);
+  VK_CHECK_COND(graph.val_is_none(bias) || graph.dtype_of(bias) == dtype);
   VK_CHECK_COND(
       graph.is_buffer_storage(input) && graph.is_buffer_storage(output));
 
@@ -83,8 +96,7 @@ void linear_dq8ca_q8csw(
       prepack_standard(graph, sums, utils::kBuffer, utils::kWidthPacked);
   const auto packed_scales =
       prepack_standard(graph, scales, utils::kBuffer, utils::kWidthPacked);
-  TmpTensor dummy_bias(
-      &graph, {1}, vkapi::kFloat, utils::kBuffer, utils::kWidthPacked);
+  TmpTensor dummy_bias(&graph, {1}, dtype, utils::kBuffer, utils::kWidthPacked);
   const bool has_bias = graph.val_is_not_none(bias);
   const auto packed_bias = has_bias
       ? prepack_standard(graph, bias, utils::kBuffer, utils::kWidthPacked)
@@ -94,9 +106,11 @@ void linear_dq8ca_q8csw(
       &graph, {M, K / 4}, vkapi::kInt, utils::kBuffer, utils::kWidthPacked);
   TmpTensor qparams(
       &graph, {M, 2}, vkapi::kFloat, utils::kBuffer, utils::kWidthPacked);
+  std::string quantize_shader = "dq8ca_q8csw_quantize";
+  add_dtype_suffix(quantize_shader, dtype);
   graph.execute_nodes().emplace_back(new DynamicDispatchNode(
       graph,
-      VK_KERNEL_FROM_STR("dq8ca_q8csw_quantize"),
+      VK_KERNEL_FROM_STR(quantize_shader),
       token_quantize_gwg,
       pick_required_lwg,
       {{{quantized.vref, qparams.vref}, vkapi::kWrite}, {input, vkapi::kRead}},
@@ -110,6 +124,7 @@ void linear_dq8ca_q8csw(
   std::string shader = "linear_dq8ca_q8csw";
   add_storage_type_suffix(shader, graph.storage_type_of(packed_weight));
   shader += graph.can_use_int8_dot_product() ? "_dot" : "_nodot";
+  add_dtype_suffix(shader, dtype);
   graph.execute_nodes().emplace_back(new DynamicDispatchNode(
       graph,
       VK_KERNEL_FROM_STR(shader),

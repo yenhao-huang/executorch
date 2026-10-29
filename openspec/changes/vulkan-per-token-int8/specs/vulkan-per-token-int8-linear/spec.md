@@ -24,6 +24,19 @@ The converted graph, fused reference, and Vulkan execution SHALL apply activatio
 - **WHEN** a Vulkan device lacks the integer dot product extension
 - **THEN** activation quantization SHALL still execute on Vulkan and retain its specified numerical behavior
 
+#### Scenario: Forced half storage
+- **WHEN** a supported float32 graph is lowered with force_fp16 enabled
+- **THEN** the runtime SHALL use half storage for activations, weight scales, bias and outputs, float32 activation qparams and scale arithmetic, and INT32 accumulation
+- **AND** results SHALL agree with a reference that accounts for half storage rounding
+
+#### Scenario: Dynamic token counts exceeding dispatch limits
+- **WHEN** a supported input grows beyond the device's row workgroup limit
+- **THEN** every token SHALL execute with independent qparams without exceeding dispatch limits or requiring standalone qparam textures
+
+#### Scenario: Multiple output consumers
+- **WHEN** a dynamically shaped linear output feeds multiple operators
+- **THEN** runtime resizing SHALL preserve the reference results for every consumer
+
 ### Requirement: Compatibility
 Existing weight-only INT8, INT4, and static activation paths SHALL retain their behavior.
 

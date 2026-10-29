@@ -3611,3 +3611,115 @@ class TestPerTokenInt8Vulkan(unittest.TestCase):
             torch.testing.assert_close(
                 runtime.forward((inp,))[0], converted(inp), rtol=2e-4, atol=2e-4
             )
+
+    def test_pt2e_per_token_int8_force_fp16(self):
+        import copy
+        from itertools import product
+
+        from executorch.backends.vulkan.serialization.vulkan_graph_schema import (
+            VkDataType,
+        )
+        from executorch.backends.vulkan.serialization.vulkan_graph_serialize import (
+            extract_vk_flatbuffer,
+            flatbuffer_to_vk_graph,
+        )
+
+        for bias, qrange in product([False, True], [(-128, 127), (-64, 63)]):
+            with self.subTest(bias=bias, qrange=qrange):
+                torch.manual_seed(46)
+                x = torch.randn(2, 3, 32)
+                x[0, 0].zero_()
+                x[0, 1] *= 1e-5
+                prepared = prepare_pt2e(
+                    export(torch.nn.Linear(32, 13, bias=bias).eval(), (x,)).module(),
+                    VulkanQuantizer().set_global(
+                        get_vulkan_quantization_config(
+                            is_dynamic=True, act_qmin=qrange[0], act_qmax=qrange[1]
+                        )
+                    ),
+                )
+                prepared(x)
+                converted = convert_pt2e(prepared)
+                reference = copy.deepcopy(converted)
+                with torch.no_grad():
+                    for value in (*reference.parameters(), *reference.buffers()):
+                        if value.is_floating_point():
+                            value.copy_(value.half().float())
+                edge = lower_module(
+                    converted, (x,), compile_options={"force_fp16": True}
+                )
+                graphs = [
+                    flatbuffer_to_vk_graph(extract_vk_flatbuffer(m.processed_bytes))
+                    for m in edge.exported_program().graph_module.modules()
+                    if hasattr(m, "processed_bytes")
+                ]
+                self.assertEqual(len(graphs), 1)
+                op = next(
+                    op
+                    for op in graphs[0].chain
+                    if op.name == "et_vk.linear_dq8ca_q8csw.default"
+                )
+                for index in (0, 3, -1) + ((4,) if bias else ()):
+                    self.assertEqual(
+                        graphs[0].values[op.args[index]].value.datatype,
+                        VkDataType.FLOAT16,
+                    )
+                runtime = _load_for_executorch_from_buffer(edge.to_executorch().buffer)
+                for inp in (x, torch.randn_like(x) * 10):
+                    expected = reference(inp.half().float()).half().float()
+                    torch.testing.assert_close(
+                        runtime.forward((inp,))[0], expected, rtol=1e-3, atol=1e-3
+                    )
+
+    def test_pt2e_per_token_int8_large_tokens(self):
+        for dynamic in (False, True):
+            with self.subTest(dynamic=dynamic):
+                torch.manual_seed(46)
+                x = torch.randn(65534 if dynamic else 65536, 4)
+                shapes = ({0: Dim("tokens", min=1, max=65540)},) if dynamic else None
+                prepared = prepare_pt2e(
+                    export(
+                        torch.nn.Linear(4, 7).eval(), (x,), dynamic_shapes=shapes
+                    ).module(),
+                    VulkanQuantizer().set_global(
+                        get_vulkan_quantization_config(is_dynamic=True)
+                    ),
+                )
+                prepared(x)
+                converted = convert_pt2e(prepared)
+                edge = lower_module(converted, (x,), dynamic_shapes=shapes)
+                runtime = _load_for_executorch_from_buffer(edge.to_executorch().buffer)
+                for tokens in (65534, 65535, 65536, 65539, 3) if dynamic else (65536,):
+                    inp = torch.randn(tokens, 4)
+                    torch.testing.assert_close(
+                        runtime.forward((inp,))[0], converted(inp), rtol=2e-4, atol=2e-4
+                    )
+
+    def test_pt2e_per_token_int8_dynamic_multiple_consumers(self):
+        class Residual(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(32, 32, bias=False)
+
+            def forward(self, x):
+                y = self.linear(x)
+                return y.relu() + y
+
+        torch.manual_seed(46)
+        x = torch.randn(2, 3, 32)
+        shapes = ({1: Dim("tokens", min=1, max=9)},)
+        prepared = prepare_pt2e(
+            export(Residual().eval(), (x,), dynamic_shapes=shapes).module(),
+            VulkanQuantizer().set_global(
+                get_vulkan_quantization_config(is_dynamic=True)
+            ),
+        )
+        prepared(x)
+        converted = convert_pt2e(prepared)
+        edge = lower_module(converted, (x,), dynamic_shapes=shapes)
+        runtime = _load_for_executorch_from_buffer(edge.to_executorch().buffer)
+        for tokens in (3, 1, 7, 2):
+            inp = torch.randn(2, tokens, 32)
+            torch.testing.assert_close(
+                runtime.forward((inp,))[0], converted(inp), rtol=2e-4, atol=2e-4
+            )

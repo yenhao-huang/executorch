@@ -11,22 +11,22 @@ Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
 Pull request: https://github.com/yenhao-huang/executorch/pull/46 (OPEN, non-draft)
 Implementation commit: 5bb3afb4119823d75e6af9a8d9d60661516226e3
 Fork PR base: base/upstream-main-390bc0618f at 390bc0618f19276e699a255bd035a35c5296cfa8
-Outcome: completed (fork delivery); no community submission or merge
+Outcome: in_progress — addressing independent Claude review; parent coordinates acceptance
 OpenSpec: openspec/changes/vulkan-per-token-int8
 Report: docs/howard/22431.md
 Logs: ../logs/
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 
 | Step | Status | Evidence | Notes |
 | --- | --- | --- | --- |
 | 0. Confirm Repository And Issue | completed | branch/HEAD checked | Exclusive worktree ownership from parent |
 | 1. Check Prior Discussion For Existing Resolution | completed | issue-current.json, issue-comments.json, issue-timeline.json, pr-22432.json, pr-22372.json | Open, no comments; linked corrections do not resolve feature |
 | 2. Read Issue And Repository Context | completed | required skills, AGENTS.md, CONTRIBUTING.md, OpenSpec proposal/design/spec | No community writes |
-| 3. Implement And Test | completed | review-final-per-token-tests.log, final-cpp-runtime-tests.log, final-host-and-adjacent-tests.log | 5 per-token tests, 16 C++ cases, and 43 host/adjacent tests passed. |
-| 4. Review And Commit | completed | all-applicable-lint-final.log, implementation-commit.log, openspec-validate-final.log | Guard/layout/rank-one findings fixed; lint, hook and OpenSpec passed. |
-| 5. Open And Follow Through On PR | completed | fork-branch-readback.txt, fork-pr-readback.json, fork-pr-repositories.json | Branch and PR 46 verified on fork; 25-file diff; no checks or reviews reported. |
-| 6. Report Result | completed | docs/howard/22431.md | Required acceptance passed; physical-GPU/encoder measurements remain conditional blockers. |
+| 3. Implement And Test | completed | claude-review/full-regression.log, claude-review/cpp-runtime-final.log | Review fixes: 50 Python tests and 32 INT8 C++ cases passed; before/fixed runtime regression 2 failures to 3 passes. |
+| 4. Review And Commit | in_progress | claude-review/review.md | Confirmed half/dispatch issues fixed; lintrunner, diff check and OpenSpec passed; committing revision. |
+| 5. Open And Follow Through On PR | in_progress | claude-review/pr-before.json | Existing fork PR 46 verified; revision push and parent Claude re-review pending. |
+| 6. Report Result | in_progress | docs/howard/22431.md | Review evidence updated; independent acceptance pending; physical-GPU/encoder limits retained. |
 
 Setup limitation: Eigen GitLab clone repeatedly fails remotely; retry or use build configuration that does not require optimized kernels. No security settings changed.
 
@@ -37,3 +37,17 @@ Optional encoder measurements: blocked; required existing HF CLI environment and
 Milestone 2026-10-28: expanded serialized Vulkan regression passed 40 shape/output-width/bias/range combinations, rank-one through rank-four, plus dynamic tokens. Shared-weight sequence passed. C++ test passed 16 cases including texture and buffer weights and dot/no-dot variants. Static tests pass baseline/fixed; enabled INT4 test has identical seven tolerance mismatches on both. Temporary decorators/API edits restored. Fork main is 449 commits behind baseline; use a new fork-only base/upstream-main-390bc0618f snapshot to keep the PR isolated.
 
 Delivery milestone: implementation commit 5bb3afb4119823d75e6af9a8d9d60661516226e3 verified on fork branch agent/fix-22431; fork PR 46 verified OPEN, non-draft, based on the exact requested baseline. No checks or reviews reported. Community timeline readback contains no fork cross-reference. No merge, force push, deletion, community writes or nested workers occurred. Final report and completion record are published in a documentation follow-up commit.
+
+## Claude review revision, 2026-10-29
+
+Reviewed head 00f4af4228501c60ca97b4cf036d3d0ae459013e. Read parent review and reproduced both confirmed bugs with registered pytest cases: force_fp16 fails kFloat assertion; 65536 tokens exceeds workgroup limits (2 failed, 1 multi-consumer dynamic test passed; logs/claude-review/registered-before.log). Implementing typed half shader variants with FP32 qparams/arithmetic and bounded grid-stride row loops. Required workflow docs retained. Remaining tentative rank-one matching scope narrowed to per-channel INT8 weights. Claude acceptance remains pending parent review.
+
+Revision milestone: force_fp16 uses typed half storage and float32 qparams; both
+shaders bound row dispatch and loop across excess tokens. Dynamic large-token
+fusion now consumes internal qparams without imposing standalone texture limits.
+Regression before/fixed: 2 failures plus 1 pass became 3 passes. Full Python
+selection: 50 passed. C++: 32 INT8 cases plus existing INT4 GEMM passed. Existing
+static passed; enabled INT4 retains identical seven baseline mismatches. Broader
+C++ INT4 missing-shader and sporadic CPU-reference failures reproduce with
+baseline test source; detailed limits and logs are in the report. Required
+workflow docs remain. Parent owns the next Claude pass and final acceptance.
