@@ -28,4 +28,4 @@
 - [ ] 5.4 Parent reviews the final pushed code/documentation head and independently reruns reproductions; address further legitimate findings until final acceptance. Round-two acceptance was superseded by the shared-activation reproduction.
 
 - [x] 5.5 Reproduce shared activation projections with large dynamic bounds; fix compatible consumer grouping while retaining external-consumer and allow/block-list checks; add registered runtime and partition regressions.
-- [ ] 5.6 Validate shared-activation correction and adjacent paths, update evidence, push normally to PR 46 and freeze the final head for parent review.
+- [x] 5.6 Validate shared-activation correction and adjacent paths, update evidence, push normally to PR 46 and freeze the final head for parent review.

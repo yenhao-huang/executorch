@@ -12,9 +12,9 @@ Pull request: https://github.com/yenhao-huang/executorch/pull/46 (OPEN, non-draf
 Initial implementation commit: 5bb3afb4119823d75e6af9a8d9d60661516226e3
 Prior FP16/dispatch correction: 7f295b497a7aad79130ce23e0124a6427b145001
 Prior reviewed head: 8c8043807f5de3106a5a1a7d3329a0fc1b1046b7
-Current correction: shared activation projections validated; correction commit pending
+Current correction commit: f0ba929cb08c15f9ee851ae716a830e34433c8b3 (shared activation projections; fork head verified)
 Fork PR base: base/upstream-main-390bc0618f at 390bc0618f19276e699a255bd035a35c5296cfa8
-Outcome: in_progress — shared activation gap reproduced after round-two acceptance; correction underway
+Outcome: in_progress — shared activation correction pushed; final parent Claude review and runtime rerun pending
 OpenSpec: openspec/changes/vulkan-per-token-int8
 Report: docs/howard/22431.md
 Logs: ../logs/
@@ -27,8 +27,8 @@ Last updated: 2026-10-29
 | 1. Check Prior Discussion For Existing Resolution | completed | issue-current.json, issue-comments.json, issue-timeline.json, pr-22432.json, pr-22372.json | Open, no comments; linked corrections do not resolve feature |
 | 2. Read Issue And Repository Context | completed | required skills, AGENTS.md, CONTRIBUTING.md, OpenSpec proposal/design/spec | No community writes |
 | 3. Implement And Test | completed | shared-activation-review/full-regression.log, shared-activation-review/cpp-runtime.log | 52 Python tests and 32 INT8 C++ cases pass; shared projection regression fails before and passes after. |
-| 4. Review And Commit | in_progress | shared-activation-review/lint-final.log, shared-activation-review/openspec-validate.log | Shared projection correction reviewed locally; scoped lint and OpenSpec pass; commit pending. |
-| 5. Open And Follow Through On PR | in_progress | claude-review/fork-branch-readback.txt, claude-review/pr-code-readback.json | Revision 7f295b497a pushed normally and PR 46 head verified; parent Claude re-review pending. |
+| 4. Review And Commit | completed | shared-activation-review/commit.log, shared-activation-review/lint-final.log, shared-activation-review/openspec-validate.log | Current shared-activation correction f0ba929cb0 committed; scoped lint, hook and OpenSpec pass. |
+| 5. Open And Follow Through On PR | in_progress | shared-activation-review/fork-code-readback.txt, shared-activation-review/pr-code-readback.json | Current correction f0ba929cb0 pushed normally and PR 46 head verified; final parent review pending. |
 | 6. Report Result | in_progress | docs/howard/22431.md | Review evidence updated; independent acceptance pending; physical-GPU/encoder limits retained. |
 
 Setup limitation: Eigen GitLab clone repeatedly fails remotely; retry or use build configuration that does not require optimized kernels. No security settings changed.
@@ -76,3 +76,5 @@ cases pass; parent reproducer passes 3/65536/2 dynamic rows. Broad validation pa
 GEMM. Final fork handoff is in progress. No native sources changed or rebuild needed.
 
 Adjacent rerun: enabled static INT8 passes; dynamic INT4 has exactly the same seven baseline mismatches and values. Temporary test adaptations restored. Lint and OpenSpec pass; preparing the shared-activation correction commit.
+
+Final correction delivery: f0ba929cb08c15f9ee851ae716a830e34433c8b3 was pushed normally and matched the fork branch and PR 46 readback. The earlier 5bb3afb411 implementation and 7f295b497a correction are historical. This final documentation record is included before freezing the worktree. The exact final code/documentation head is recorded in task-parent logs/shared-activation-review/pr-final-readback.json and READY.md and handed to parent; no metadata commits follow that handoff. Parent owns independent Claude and runtime acceptance.
