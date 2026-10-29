@@ -28,5 +28,5 @@
 - [x] 4.2 Pass backend selection coherently through visitors and restrict GatherNd to HTP.
 - [x] 4.3 Cover repeated/out-of-order, static and activation indices/tables; verify 16a8w/16a16w HTP numerics and original RoPE correction on matched SDKs.
 - [x] 4.4 Document pre-existing LPAI numerical failure and retain required workflow records.
-- [ ] 4.5 Commit/push the reviewed revision and verify the existing fork PR head for the parent's next Claude pass.
+- [x] 4.5 Commit/push the reviewed revision and verify the existing fork PR head for the parent's next Claude pass. Correction ed903011cb is verified on the existing fork branch.
 - [ ] 4.6 Receive independent Claude acceptance from the parent; do not self-approve.

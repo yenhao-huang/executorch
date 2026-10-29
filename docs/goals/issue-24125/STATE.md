@@ -10,7 +10,8 @@ Branch: agent/fix-24125
 Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
 Pull request: https://github.com/yenhao-huang/executorch/pull/45
 Code commit: d8abc695424429666e203b285a7a963f4c873179
-Delivery: existing fork PR verified; review revision in progress; Claude acceptance pending; physical-device acceptance blocked
+Review correction commit: ed903011cbe1138ebd5f21aaa27f50a29268e39a
+Delivery: review correction pushed to existing fork PR; Claude acceptance pending; physical-device acceptance blocked
 Report: docs/howard/24125.md
 OpenSpec: openspec/changes/qnn-rope-gather-24125
 
@@ -22,7 +23,7 @@ Last updated: 2026-10-29
 | 1. Check Prior Discussion For Existing Resolution | completed | ../logs/{issue-current,comments,timeline,linked-search,commit-search}.json | Open; zero comments/events; no linked fix found |
 | 2. Read Issue And Repository Context | completed | AGENTS.md, CONTRIBUTING.md, required skills, parent-notes.md | No physical device or existing SDK supplied |
 | 3. Implement And Test | completed (emulator) | ../logs/regression-baseline-final.log, regression-fixed.log, regression-fixed-2.47.log | Both SDKs reproduce; equivalent GatherNd fixes original model; physical acceptance blocked |
-| 4. Review And Commit | in_progress (review revision) | ../logs/claude-review/ | Backend guard and coverage validated; preparing normal commit/push |
+| 4. Review And Commit | completed (review correction) | ../logs/claude-review/commit-revision.log, remote-revision.txt | ed903011cb pushed normally and read back |
 | 5. Open And Follow Through On PR | in_progress (independent review) | ../logs/claude-review/review.md | PR 45 open; parent will run next Claude pass; acceptance not yet granted |
 | 6. Report Result | completed (qualified) | docs/howard/24125.md | Emulator correction verified; physical SM8850 acceptance blocked |
 
@@ -243,3 +244,13 @@ Review P3 asking to remove workflow records conflicts with explicit user
 requirements: keep docs/goals, docs/howard and OpenSpec in this fork PR.
 Physical SM8850/HTPv81 and performance remain unverified. Claude acceptance is
 pending the parent's next independent pass on the final pushed commit.
+
+Review correction committed as ed903011cbe1138ebd5f21aaa27f50a29268e39a; commit
+hook and lint passed. Normal push to agent/fix-24125 succeeded and git ls-remote
+matches; PR 45 remains OPEN on the intended base, with no GitHub checks/reviews
+reported. Updated PR description records HTP-only scope, new coverage and LPAI
+numerical limitation. gh pr edit hit a deprecated Projects GraphQL endpoint;
+read back the unchanged description, then used the normal REST update against
+the same authorized fork PR. No approval or policy rejection was bypassed.
+All new community links retain redirect.github.com and AI assistance disclosure.
+Ready for the parent's next independent Claude pass; no acceptance asserted.
