@@ -9,7 +9,7 @@ Issue: [ExecuTorch 24125](https://redirect.github.com/pytorch/executorch/issues/
 Branch: agent/fix-24125
 Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
 Pull request: https://github.com/yenhao-huang/executorch/pull/45
-Code commit: d8abc695424429666e203b285a7a963f4c873179
+Initial workaround commit (requires review correction below): d8abc695424429666e203b285a7a963f4c873179
 Review correction commit: ed903011cbe1138ebd5f21aaa27f50a29268e39a
 Delivery: review correction pushed to existing fork PR; Claude acceptance pending; physical-device acceptance blocked
 Report: docs/howard/24125.md
@@ -180,7 +180,7 @@ three tests. Scoped all-file lint exits 0; OpenSpec strict validation exits 0.
 Fork main is 449 commits behind the required baseline. Created fork base branch
 base/upstream-main-390bc0618f at the exact baseline, without changing main.
 Pushed agent/fix-24125 normally and verified both remote refs with git ls-remote.
-GitHub compare confirms one code commit and exactly the 11 reviewed issue files.
+At initial publication, GitHub compare confirmed one code commit and 11 reviewed issue files; the later review correction adds backend propagation and regression coverage.
 Created and read back https://github.com/yenhao-huang/executorch/pull/45:
 OPEN, non-draft, correct head/base, no comments/reviews/checks at publication.
 Fork Actions is enabled, but no runs exist for this branch at this checkpoint;
