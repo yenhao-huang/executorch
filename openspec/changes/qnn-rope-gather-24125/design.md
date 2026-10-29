@@ -42,7 +42,7 @@ qnn-net-run returns bitwise identical outputs, localizing the failure beyond
 ExecuTorch runtime output handling. Consistent shape/layout/quantization metadata
 does not explain it; the SDK's internal cause remains unproven.
 
-Use GatherNd for axis-zero, rank-two UFIXED_POINT16 tables with vector indices.
+Use GatherNd only on HTP for axis-zero, rank-two UFIXED_POINT16 tables with vector indices.
 Reshaping indices from [N] to [N,1] preserves indexing with batch_dims=0 and
 avoids the failing Gather path. Original outputs reach QDQ accuracy on both SDKs.
 Keep all other indexing forms unchanged. A single output-only RoPE also fails
@@ -56,3 +56,12 @@ SharedGatherRoPE; test_qnn_delegate.py registers the original and smaller shapes
 with eight calibration batches and all-output comparisons. Issue-scoped state,
 acceptance report and OpenSpec artifacts record evidence and blocked physical
 acceptance. No runtime, C++ build, dependencies or public APIs are changed.
+
+Independent review found LPAI does not support GatherNd. Forward the selected
+backend through the visitor factory, support checking and preprocessing, and
+require HTP in the guard. Keep a real LPAI compilation/delegation regression:
+the pre-review lowering yields zero delegates; the corrected lowering yields
+one. Test 16a8w/16a16w activation tables with repeated/out-of-order and static
+indices; on HTP also check numerical execution. LPAI numerical execution for
+this shape already fails with the original baseline Gather and is not asserted
+by the delegation regression. Preserve that limitation in the report.

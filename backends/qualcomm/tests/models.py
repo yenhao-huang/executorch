@@ -1507,6 +1507,15 @@ class Index(torch.nn.Module):
         return self.dispatcher[self.axis](x)
 
 
+class IndexTable(torch.nn.Module):
+    def __init__(self, indices=None):
+        super().__init__()
+        self.register_buffer("indices", indices)
+
+    def forward(self, table, indices=None):
+        return table[self.indices if indices is None else indices]
+
+
 class SharedGatherRoPE(torch.nn.Module):
     def __init__(self, dim):
         super().__init__()

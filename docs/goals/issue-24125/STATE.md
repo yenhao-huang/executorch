@@ -10,11 +10,11 @@ Branch: agent/fix-24125
 Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
 Pull request: https://github.com/yenhao-huang/executorch/pull/45
 Code commit: d8abc695424429666e203b285a7a963f4c873179
-Delivery: fork branch and open PR verified; physical-device acceptance blocked
+Delivery: existing fork PR verified; review revision in progress; Claude acceptance pending; physical-device acceptance blocked
 Report: docs/howard/24125.md
 OpenSpec: openspec/changes/qnn-rope-gather-24125
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 
 | Step | Status | Evidence | Notes |
 | --- | --- | --- | --- |
@@ -22,8 +22,8 @@ Last updated: 2026-10-28
 | 1. Check Prior Discussion For Existing Resolution | completed | ../logs/{issue-current,comments,timeline,linked-search,commit-search}.json | Open; zero comments/events; no linked fix found |
 | 2. Read Issue And Repository Context | completed | AGENTS.md, CONTRIBUTING.md, required skills, parent-notes.md | No physical device or existing SDK supplied |
 | 3. Implement And Test | completed (emulator) | ../logs/regression-baseline-final.log, regression-fixed.log, regression-fixed-2.47.log | Both SDKs reproduce; equivalent GatherNd fixes original model; physical acceptance blocked |
-| 4. Review And Commit | completed | ../logs/lint-all-files.log, buck-parity-ready.log, precommit-verified.log | Code commit d8abc69542; CMake recheck passes |
-| 5. Open And Follow Through On PR | completed (fork delivery) | ../logs/push-feature.log, pr-readback.json, fork-runs.json | PR 45 open, remote head verified; no checks/reviews yet |
+| 4. Review And Commit | in_progress (review revision) | ../logs/claude-review/ | Backend guard and coverage validated; preparing normal commit/push |
+| 5. Open And Follow Through On PR | in_progress (independent review) | ../logs/claude-review/review.md | PR 45 open; parent will run next Claude pass; acceptance not yet granted |
 | 6. Report Result | completed (qualified) | docs/howard/24125.md | Emulator correction verified; physical SM8850 acceptance blocked |
 
 ## Environment and commands
@@ -198,3 +198,48 @@ No merges, force pushes, branch deletions, security changes or license acceptanc
 Parent owns daily reporting. AC-4 remains blocked until an authorized physical
 SM8850/HTPv81 run; the report contains device commands. Fork delivery is complete,
 but full hardware acceptance is not claimed.
+
+## Claude review revision in progress — 2026-10-29
+
+Parent owns independent Claude CLI review; no reviewer or worker spawned here.
+Reviewed head: 6348763a18dd5511b293cbbe87fa7315c8930888. Read full review in
+../logs/claude-review/review.md and parent reproduction. Confirmed P2: the
+workaround also selected GatherNd for LPAI, which only supports Gather. Added
+registered index-table regression: 16a8w/16a16w, activation table [64,32],
+repeated/out-of-order indices [5,0,5,63], both graph-input and static indices.
+Before the guard, all four LPAI subcases fail with 0 delegates instead of 1
+and SDK unsupported-GatherNd error 6005 (lpai-regression-before.log).
+
+Backend type is now mandatory at get_node_visitors and supplied by both support
+checking (including LPAI fallback validation) and preprocessing. All factory
+callers and custom-op construction forward it. Direct metadata-only NodeVisitor
+construction defaults to Undefined rather than assuming HTP. Index selects
+GatherNd only for kHtpBackend. LPAI real SDK compilation now produces one
+delegate for each case (lpai-delegation-after.log, exit 0).
+
+Numerical LPAI execution exposed a separate existing failure for this table
+shape. Loading original 390bc0618f define_node in memory reproduces all four
+numerical failures (lpai-original-baseline-numerics.log); source was not reset.
+Therefore the registered LPAI regression asserts real compilation/delegation,
+not numerical correctness. It is not skipped. HTP uses the same cases with
+strict numerical checks (atol/rtol 1e-3). The reviewed-head method loaded in
+memory still fails all four delegation checks with this final test configuration
+(lpai-delegation-before.log, exit 1). No unsupported operation is suppressed.
+
+HTP 2.51 new-index/original-RoPE/adjacent suite: four tests pass. New-index plus
+original-RoPE comparison on matched 2.47 build: two tests pass. Both original-model
+exports and runners exit 0; all three outputs on each SDK are bitwise identical
+to the prior HTP fix. k1 errors remain 0.001663680654 (2.51) and 0.001663675997
+(2.47), in revised-metrics.json. Restored the matching 2.51 adaptor afterward.
+Full test_passes.py
+attempt: 39 passed, 49 subtests passed; one unrelated MHA test blocked by missing
+torchtune. Two existing draw-graph tests reach rendering but lack Graphviz dot.
+These are recorded as environment failures, not passes. The scoped rerun excluding
+only that MHA test exits 0: 39 passed, 49 subtests passed. Scoped lint, strict
+OpenSpec validation, incremental Buck and CMake rechecks pass; existing builds
+and installed SDKs were reused.
+
+Review P3 asking to remove workflow records conflicts with explicit user
+requirements: keep docs/goals, docs/howard and OpenSpec in this fork PR.
+Physical SM8850/HTPv81 and performance remain unverified. Claude acceptance is
+pending the parent's next independent pass on the final pushed commit.

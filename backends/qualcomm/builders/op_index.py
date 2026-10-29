@@ -9,6 +9,9 @@ import executorch.backends.qualcomm.python.PyQnnManagerAdaptor as PyQnnManager
 
 import numpy as np
 import torch
+from executorch.backends.qualcomm.serialization.qc_schema import (
+    QnnExecuTorchBackendType,
+)
 from executorch.backends.qualcomm.utils.constants import QCOM_DATA
 
 from .node_visitor import NodeVisitor
@@ -57,7 +60,8 @@ class Index(NodeVisitor):
 
         _, input_quant_config = self.get_quant_encoding_conf(input_node, node)
         use_gather_nd = (
-            axis == 0
+            self.backend_type == QnnExecuTorchBackendType.kHtpBackend
+            and axis == 0
             and input_tensor.dim() == 2
             and indices_tensor.dim() == 1
             and self.get_data_type(input_tensor, input_quant_config)

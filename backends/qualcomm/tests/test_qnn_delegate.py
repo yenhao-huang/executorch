@@ -4806,6 +4806,30 @@ class TestQNNQuantizedOperator(TestQNN):
                 module = self.get_qdq_module(module, sample_input)
                 self.lower_module_and_test_output(module, sample_input)
 
+    def test_qnn_backend_index_table_16bit(self):
+        self.atol = 1e-3
+        self.rtol = 1e-3
+        torch.manual_seed(0)
+        table = torch.randn(64, 32)
+        indices = torch.tensor([5, 0, 5, 63], dtype=torch.int32)
+        for quant_dtype in [QuantDtype.use_16a8w, QuantDtype.use_16a16w]:
+            for static_indices in [False, True]:
+                with self.subTest(
+                    quant_dtype=quant_dtype, static_indices=static_indices
+                ):
+                    module = IndexTable(  # noqa: F405
+                        indices if static_indices else None
+                    )
+                    inputs = (table,) if static_indices else (table, indices)
+                    quantized = self.get_qdq_module(
+                        module, inputs, quant_dtype=quant_dtype
+                    )
+                    # LPAI Gather has a pre-existing emulator numerical failure;
+                    # still require successful compilation and one delegate.
+                    self.lower_module_and_test_output(
+                        quantized, inputs, assert_output_equal=self.backend != "lpai"
+                    )
+
     def test_qnn_backend_shared_gather_rope(self):
         if self.backend != "htp":
             self.skipTest("16a8w gathered RoPE regression targets HTP")
@@ -7767,7 +7791,9 @@ class TestQNNFloatingPointUtils(TestQNN):
         )
         nodes_to_wrappers = defaultdict(dict)
         node_visitors = get_node_visitors(
-            delegated_program.exported_program, enable_tensor_dump=False
+            delegated_program.exported_program,
+            enable_tensor_dump=False,
+            backend_type=get_backend_type(self.backend),
         )
 
         py_op_wrapper_list = []
@@ -8929,7 +8955,9 @@ class TestQNNQuantizedUtils(TestQNN):
         )
         nodes_to_wrappers = defaultdict(dict)
         node_visitors = get_node_visitors(
-            delegated_program.exported_program, enable_tensor_dump=False
+            delegated_program.exported_program,
+            enable_tensor_dump=False,
+            backend_type=get_backend_type(self.backend),
         )
 
         py_op_wrapper_list = []

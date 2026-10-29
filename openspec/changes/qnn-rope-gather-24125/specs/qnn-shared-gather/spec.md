@@ -26,3 +26,19 @@ of whether that consumer also feeds another operation or only a graph output.
 
 - **WHEN** one 16a8w RoPE consumes the same gathered table form and feeds only a graph output
 - **THEN** the corrected lowering also agrees with the reference, without relying on multiple consumers
+
+### Requirement: Preserve backend-specific indexing support
+
+The HTP workaround SHALL NOT replace supported LPAI Gather operations with
+unsupported GatherNd operations. Backend selection SHALL be consistent between
+support validation and preprocessing.
+
+#### Scenario: LPAI 16-bit row indexing
+
+- **WHEN** LPAI lowers a rank-two UFIXED_POINT16 activation table with vector indices, including repeated and static indices
+- **THEN** the index remains delegated and compiles using the supported Gather operation
+
+#### Scenario: HTP row indexing equivalence
+
+- **WHEN** HTP lowers the same table with repeated/out-of-order input or static indices using 16a8w or 16a16w
+- **THEN** numerical execution agrees with QDQ while preserving one delegate
