@@ -1875,7 +1875,6 @@ class TestPerTokenInt8LinearFusion(unittest.TestCase):
                 self.assertEqual(
                     support.is_node_supported({}, chooser), case == "compatible"
                 )
-                if case.startswith("operator") or case.startswith("module"):
-                    self.assertFalse(support.is_node_supported({}, second.anchor_node))
                 if case.startswith("module"):
+                    self.assertFalse(support.is_node_supported({}, second.anchor_node))
                     self.assertTrue(support.is_node_supported({}, first.anchor_node))

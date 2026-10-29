@@ -95,6 +95,8 @@ independent asymmetric INT8 activation scales and zero points over the last
 both apply activation quantization. Lowering supports float32 graphs with positive
 feature counts divisible by four, batched inputs, and optional float32 bias.
 Weights must have zero zero-points and float32 per-output-channel scales.
+Custom quantizers that produce nonzero weight zero-points are rejected during
+lowering; this path does not provide an asymmetric-weight or CPU fallback.
 The `force_fp16` compile option stores activations, weight scales, bias and outputs
 in half precision; activation qparams and scale arithmetic remain float32, and
 products accumulate in INT32. Token counts can exceed the device's dispatch

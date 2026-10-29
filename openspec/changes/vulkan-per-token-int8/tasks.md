@@ -29,3 +29,10 @@
 
 - [x] 5.5 Reproduce shared activation projections with large dynamic bounds; fix compatible consumer grouping while retaining external-consumer and allow/block-list checks; add registered runtime and partition regressions.
 - [x] 5.6 Validate shared-activation correction and adjacent paths, update evidence, push normally to PR 46 and freeze the final head for parent review.
+
+
+## 6. Round-three allowlist compatibility
+
+- [x] 6.1 Reproduce RMSNorm and quantized linear fused-only allowlist failures; restore generic baseline behavior and scope extra checks to per-token activation absorption.
+- [x] 6.2 Test nonzero weight zeros through baseline/current full export and runtime, record unsupported-input disposition and add full-lowering regression coverage.
+- [ ] 6.3 Run targeted and broad Vulkan/WebGPU tests, scoped lint/OpenSpec, update evidence, commit/push and freeze final code/documentation head for parent review.

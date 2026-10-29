@@ -130,13 +130,16 @@ class VulkanSupportedOperators(OperatorSupportBase):
         self.nn_module_allowlist = nn_module_allowlist
         self._node_support: Dict[torch.fx.Node, bool] = {}
 
+        # Existing fusions bypass operator filters on their internal nodes. Only
+        # the additional per-token activation absorption uses these stricter checks.
         token_linears = [
             match
             for match in self.fusable_subgraphs
             if isinstance(match, QuantizedLinearMatch)
             and match.is_per_token_int8_linear()
             and all(
-                self._is_node_supported(node)
+                self._activation_node_is_allowed(node)[0]
+                and self._is_node_supported(node)
                 for node in match.all_nodes
                 if node.op == "call_function"
             )
@@ -144,14 +147,14 @@ class VulkanSupportedOperators(OperatorSupportBase):
         consuming_nodes = {node for match in token_linears for node in match.all_nodes}
         for match in token_linears:
             nodes = match.fused_activation_nodes(consuming_nodes)
-            if all(self._node_is_allowed(node)[0] for node in nodes):
+            if all(self._activation_node_is_allowed(node)[0] for node in nodes):
                 # Qparams shared only by compatible projections disappear during
                 # fusion, so their standalone texture limits do not apply.
                 self.fusable_nodes.update(nodes)
                 for node in nodes:
                     self._node_support.pop(node, None)
 
-    def _node_is_allowed(self, node: torch.fx.Node) -> Tuple[bool, str]:
+    def _activation_node_is_allowed(self, node: torch.fx.Node) -> Tuple[bool, str]:
         if node.target in self.operator_blocklist:
             return False, "op is in blocklist"
         if (
@@ -326,10 +329,20 @@ class VulkanSupportedOperators(OperatorSupportBase):
             return False
 
         if node.op == "call_function":
-            allowed, reason = self._node_is_allowed(node)
-            if not allowed:
-                self.log_skip(node, reason)
-                return False
+            # Apply nn module allowlist and blocklist
+            if self.nn_module_allowlist is not None:
+                if not utils.node_comes_from_any_nn_module_in_set(
+                    node, self.nn_module_allowlist
+                ):
+                    self.log_skip(node, "source nn.Module is not in allowlist")
+                    return False
+
+            if self.nn_module_blocklist is not None:
+                if utils.node_comes_from_any_nn_module_in_set(
+                    node, self.nn_module_blocklist
+                ):
+                    self.log_skip(node, "source nn.Module is in blocklist")
+                    return False
 
             # Check if this node is part of a fusable subgraph
             if node in self.fusable_nodes:

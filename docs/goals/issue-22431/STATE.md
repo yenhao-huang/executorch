@@ -12,9 +12,11 @@ Pull request: https://github.com/yenhao-huang/executorch/pull/46 (OPEN, non-draf
 Initial implementation commit: 5bb3afb4119823d75e6af9a8d9d60661516226e3
 Prior FP16/dispatch correction: 7f295b497a7aad79130ce23e0124a6427b145001
 Prior reviewed head: 8c8043807f5de3106a5a1a7d3329a0fc1b1046b7
-Current correction commit: f0ba929cb08c15f9ee851ae716a830e34433c8b3 (shared activation projections; fork head verified)
+Prior shared-activation correction: f0ba929cb08c15f9ee851ae716a830e34433c8b3
+Round-three reviewed head: e6aac4f9cc1d1094d67ca3ee20e7b2a6868a13f3
+Current correction: restore existing fused-operator allowlist semantics; commit pending
 Fork PR base: base/upstream-main-390bc0618f at 390bc0618f19276e699a255bd035a35c5296cfa8
-Outcome: in_progress — shared activation correction pushed; final parent Claude review and runtime rerun pending
+Outcome: in_progress — round-three correction validated; fork delivery and parent review pending
 OpenSpec: openspec/changes/vulkan-per-token-int8
 Report: docs/howard/22431.md
 Logs: ../logs/
@@ -26,8 +28,8 @@ Last updated: 2026-10-29
 | 0. Confirm Repository And Issue | completed | branch/HEAD checked | Exclusive worktree ownership from parent |
 | 1. Check Prior Discussion For Existing Resolution | completed | issue-current.json, issue-comments.json, issue-timeline.json, pr-22432.json, pr-22372.json | Open, no comments; linked corrections do not resolve feature |
 | 2. Read Issue And Repository Context | completed | required skills, AGENTS.md, CONTRIBUTING.md, OpenSpec proposal/design/spec | No community writes |
-| 3. Implement And Test | completed | shared-activation-review/full-regression.log, shared-activation-review/cpp-runtime.log | 52 Python tests and 32 INT8 C++ cases pass; shared projection regression fails before and passes after. |
-| 4. Review And Commit | completed | shared-activation-review/commit.log, shared-activation-review/lint-final.log, shared-activation-review/openspec-validate.log | Current shared-activation correction f0ba929cb0 committed; scoped lint, hook and OpenSpec pass. |
+| 3. Implement And Test | completed | allowlist-correction/registered-before.log, targeted-final.log, full-regression.log | Two allowlist regressions fail before; five targeted tests and 72 broad Vulkan/WebGPU tests pass after. |
+| 4. Review And Commit | in_progress | allowlist-correction/ | P1 correction and P3 evidence recorded; scoped lint and OpenSpec pass; commit pending. |
 | 5. Open And Follow Through On PR | in_progress | shared-activation-review/fork-code-readback.txt, shared-activation-review/pr-code-readback.json | Current correction f0ba929cb0 pushed normally and PR 46 head verified; final parent review pending. |
 | 6. Report Result | in_progress | docs/howard/22431.md | Review evidence updated; independent acceptance pending; physical-GPU/encoder limits retained. |
 
@@ -70,11 +72,36 @@ regression. Do not treat round-two acceptance as acceptance of the current fix.
 
 The correction considers consumption across compatible, permitted projections.
 Genuine external qparams and incompatible/excluded consumers do not receive the
-fusion exception. Operator/module allowlists and blocklists are checked before
-the fusion fast path. Registered shared-output runtime and nine partition policy
+fusion exception. At f0ba929cb0, operator/module filters were moved before the
+generic fusion fast path; round three identified this as a regression, corrected below. Registered shared-output runtime and nine partition policy
 cases pass; parent reproducer passes 3/65536/2 dynamic rows. Broad validation passed: 52 Python tests, 32 INT8 C++ cases and existing INT4
 GEMM. Final fork handoff is in progress. No native sources changed or rebuild needed.
 
 Adjacent rerun: enabled static INT8 passes; dynamic INT4 has exactly the same seven baseline mismatches and values. Temporary test adaptations restored. Lint and OpenSpec pass; preparing the shared-activation correction commit.
 
-Final correction delivery: f0ba929cb08c15f9ee851ae716a830e34433c8b3 was pushed normally and matched the fork branch and PR 46 readback. The earlier 5bb3afb411 implementation and 7f295b497a correction are historical. This final documentation record is included before freezing the worktree. The exact final code/documentation head is recorded in task-parent logs/shared-activation-review/pr-final-readback.json and READY.md and handed to parent; no metadata commits follow that handoff. Parent owns independent Claude and runtime acceptance.
+Shared-activation delivery (historical): f0ba929cb08c15f9ee851ae716a830e34433c8b3 was pushed normally and matched the fork branch and PR 46 readback. The earlier 5bb3afb411 implementation and 7f295b497a correction are historical. This final documentation record is included before freezing the worktree. The exact final code/documentation head is recorded in task-parent logs/shared-activation-review/pr-final-readback.json and READY.md and handed to parent; no metadata commits follow that handoff. Parent owns independent Claude and runtime acceptance.
+
+
+## Round-three allowlist correction and nonzero-weight investigation
+
+Claude requested changes at e6aac4f9cc. Parent confirmed real WebGPU RMSNorm
+allowlist regression. New registered RMSNorm and INT4 linear tests fail before
+(two failures), then pass through both Vulkan and WebGPU partitioners with one
+fused serialized delegate and llvmpipe execution. The generic _check_node_support
+method now matches baseline 390bc0618f exactly; stricter operator checks apply
+only to per-token activation candidates/additions. nn.Module policy is unchanged.
+Shared-projection absorption and genuine external/incompatible consumer rejection
+remain covered; generic fused internals are no longer asserted to obey operator
+filters individually.
+
+P3 disposition: unsupported asymmetric-weight input, not a demonstrated working
+fallback regression. Identical saved per-token graphs with weight zero points 0/1
+were passed through baseline Python backend files. Both serialize but abort at
+Vulkan load on missing dequantize_per_channel (exit -6). Current zero=0 executes;
+zero=1 gives the documented early ValueError through FusePatternsPass. CPU-only
+export also fails missing out variants. Keep symmetric-weight scope and explicit
+rejection; registered full-lowering coverage added. Baseline files restored exactly.
+Logs: allowlist-correction/nonzero-*.log. Native sources/build unchanged; prior
+32-case native result remains at the shared-activation correction.
+
+Round-three validation milestone: 72 Python tests passed (122 deselected); five focused tests passed, including the two before/fixed allowlist regressions. Parent RMS script produces one fused delegate. Scoped lint and strict OpenSpec pass. No native files changed; previous 32 C++ INT8 cases remain prior evidence. Final correction commit and fork handoff pending.

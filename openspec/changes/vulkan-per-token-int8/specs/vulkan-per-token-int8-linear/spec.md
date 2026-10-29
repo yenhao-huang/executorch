@@ -52,3 +52,12 @@ Existing weight-only INT8, INT4, and static activation paths SHALL retain their 
 #### Scenario: Adjacent configurations
 - **WHEN** existing quantization configurations are selected
 - **THEN** relevant regression tests SHALL preserve their prior results, with pre-existing failures documented separately
+
+#### Scenario: Allowlist names fused operations
+- **WHEN** an existing fused operation is supported through the WebGPU operator allowlist but its internal operations are absent
+- **THEN** generic fusion SHALL retain baseline behavior, including RMSNorm and quantized linear serialization
+- **AND** stricter per-token activation absorption checks SHALL NOT alter that generic contract
+
+#### Scenario: Unsupported asymmetric weights
+- **WHEN** a custom per-token graph has nonzero weight zero points
+- **THEN** lowering SHALL report that symmetric weights are required rather than claim a functioning standalone or CPU fallback
