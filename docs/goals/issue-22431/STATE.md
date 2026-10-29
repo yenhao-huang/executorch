@@ -14,9 +14,9 @@ Prior FP16/dispatch correction: 7f295b497a7aad79130ce23e0124a6427b145001
 Prior reviewed head: 8c8043807f5de3106a5a1a7d3329a0fc1b1046b7
 Prior shared-activation correction: f0ba929cb08c15f9ee851ae716a830e34433c8b3
 Round-three reviewed head: e6aac4f9cc1d1094d67ca3ee20e7b2a6868a13f3
-Current correction: restore existing fused-operator allowlist semantics; commit pending
+Current correction commit: 64df469e6e1acbed8cd527e0173e8d41a741a3f2 (round-three allowlist compatibility; fork head verified)
 Fork PR base: base/upstream-main-390bc0618f at 390bc0618f19276e699a255bd035a35c5296cfa8
-Outcome: in_progress — round-three correction validated; fork delivery and parent review pending
+Outcome: in_progress — round-three correction pushed and verified; parent independent review pending
 OpenSpec: openspec/changes/vulkan-per-token-int8
 Report: docs/howard/22431.md
 Logs: ../logs/
@@ -29,8 +29,8 @@ Last updated: 2026-10-29
 | 1. Check Prior Discussion For Existing Resolution | completed | issue-current.json, issue-comments.json, issue-timeline.json, pr-22432.json, pr-22372.json | Open, no comments; linked corrections do not resolve feature |
 | 2. Read Issue And Repository Context | completed | required skills, AGENTS.md, CONTRIBUTING.md, OpenSpec proposal/design/spec | No community writes |
 | 3. Implement And Test | completed | allowlist-correction/registered-before.log, targeted-final.log, full-regression.log | Two allowlist regressions fail before; five targeted tests and 72 broad Vulkan/WebGPU tests pass after. |
-| 4. Review And Commit | in_progress | allowlist-correction/ | P1 correction and P3 evidence recorded; scoped lint and OpenSpec pass; commit pending. |
-| 5. Open And Follow Through On PR | in_progress | shared-activation-review/fork-code-readback.txt, shared-activation-review/pr-code-readback.json | Current correction f0ba929cb0 pushed normally and PR 46 head verified; final parent review pending. |
+| 4. Review And Commit | completed | allowlist-correction/commit.log, lint-final.log, openspec-validate.log | P1 correction 64df469e6e committed; P3 full-pipeline evidence recorded; lint, hook and OpenSpec pass. |
+| 5. Open And Follow Through On PR | in_progress | allowlist-correction/fork-code-readback.txt, pr-code-readback.json | Current correction 64df469e6e pushed normally and PR 46 head verified; parent review pending. |
 | 6. Report Result | in_progress | docs/howard/22431.md | Review evidence updated; independent acceptance pending; physical-GPU/encoder limits retained. |
 
 Setup limitation: Eigen GitLab clone repeatedly fails remotely; retry or use build configuration that does not require optimized kernels. No security settings changed.
@@ -105,3 +105,5 @@ Logs: allowlist-correction/nonzero-*.log. Native sources/build unchanged; prior
 32-case native result remains at the shared-activation correction.
 
 Round-three validation milestone: 72 Python tests passed (122 deselected); five focused tests passed, including the two before/fixed allowlist regressions. Parent RMS script produces one fused delegate. Scoped lint and strict OpenSpec pass. No native files changed; previous 32 C++ INT8 cases remain prior evidence. Final correction commit and fork handoff pending.
+
+Round-three delivery: correction 64df469e6e1acbed8cd527e0173e8d41a741a3f2 passed the commit hook, pushed normally to agent/fix-22431 and matched branch/PR 46 readback. This documentation record precedes the final frozen review head; exact final SHA is in task-parent logs/allowlist-correction/pr-final-readback.json and READY.md. No metadata commits follow handoff. Parent owns final Claude acceptance and any further findings; hardware/CI limits remain.

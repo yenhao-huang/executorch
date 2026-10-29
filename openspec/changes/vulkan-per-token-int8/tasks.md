@@ -35,4 +35,4 @@
 
 - [x] 6.1 Reproduce RMSNorm and quantized linear fused-only allowlist failures; restore generic baseline behavior and scope extra checks to per-token activation absorption.
 - [x] 6.2 Test nonzero weight zeros through baseline/current full export and runtime, record unsupported-input disposition and add full-lowering regression coverage.
-- [ ] 6.3 Run targeted and broad Vulkan/WebGPU tests, scoped lint/OpenSpec, update evidence, commit/push and freeze final code/documentation head for parent review.
+- [x] 6.3 Run targeted and broad Vulkan/WebGPU tests, scoped lint/OpenSpec, update evidence, commit/push and freeze final code/documentation head for parent review.
