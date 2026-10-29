@@ -37,6 +37,15 @@ The converted graph, fused reference, and Vulkan execution SHALL apply activatio
 - **WHEN** a dynamically shaped linear output feeds multiple operators
 - **THEN** runtime resizing SHALL preserve the reference results for every consumer
 
+#### Scenario: Shared activation projections
+- **WHEN** compatible linear projections share one activation chooser and Q/DQ with large dynamic token bounds
+- **THEN** each projection and their combined outputs SHALL agree with the converted reference across runtime resizing
+- **AND** fully consumed shared qparams SHALL NOT require standalone texture storage
+
+#### Scenario: External or excluded shared consumers
+- **WHEN** qparams have an external consumer or a projection is incompatible or excluded by an operator/module allowlist or blocklist
+- **THEN** the shared activation nodes SHALL retain normal support checks rather than being unconditionally included in fusion
+
 ### Requirement: Compatibility
 Existing weight-only INT8, INT4, and static activation paths SHALL retain their behavior.
 

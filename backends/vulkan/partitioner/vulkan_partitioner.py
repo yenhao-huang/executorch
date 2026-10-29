@@ -130,6 +130,48 @@ class VulkanSupportedOperators(OperatorSupportBase):
         self.nn_module_allowlist = nn_module_allowlist
         self._node_support: Dict[torch.fx.Node, bool] = {}
 
+        token_linears = [
+            match
+            for match in self.fusable_subgraphs
+            if isinstance(match, QuantizedLinearMatch)
+            and match.is_per_token_int8_linear()
+            and all(
+                self._is_node_supported(node)
+                for node in match.all_nodes
+                if node.op == "call_function"
+            )
+        ]
+        consuming_nodes = {node for match in token_linears for node in match.all_nodes}
+        for match in token_linears:
+            nodes = match.fused_activation_nodes(consuming_nodes)
+            if all(self._node_is_allowed(node)[0] for node in nodes):
+                # Qparams shared only by compatible projections disappear during
+                # fusion, so their standalone texture limits do not apply.
+                self.fusable_nodes.update(nodes)
+                for node in nodes:
+                    self._node_support.pop(node, None)
+
+    def _node_is_allowed(self, node: torch.fx.Node) -> Tuple[bool, str]:
+        if node.target in self.operator_blocklist:
+            return False, "op is in blocklist"
+        if (
+            utils.is_torch_op_node(node)
+            and self.operator_allowlist is not None
+            and node.target not in self.operator_allowlist
+        ):
+            return False, "op is not in allowlist"
+        if self.nn_module_allowlist is not None:
+            if not utils.node_comes_from_any_nn_module_in_set(
+                node, self.nn_module_allowlist
+            ):
+                return False, "source nn.Module is not in allowlist"
+        if self.nn_module_blocklist is not None:
+            if utils.node_comes_from_any_nn_module_in_set(
+                node, self.nn_module_blocklist
+            ):
+                return False, "source nn.Module is in blocklist"
+        return True, ""
+
     def op_node_is_compatible(  # noqa: C901: Function is too complex
         self, node: torch.fx.Node, features: Optional[OpFeatures] = None
     ) -> Tuple[bool, str]:
@@ -284,20 +326,10 @@ class VulkanSupportedOperators(OperatorSupportBase):
             return False
 
         if node.op == "call_function":
-            # Apply nn module allowlist and blocklist
-            if self.nn_module_allowlist is not None:
-                if not utils.node_comes_from_any_nn_module_in_set(
-                    node, self.nn_module_allowlist
-                ):
-                    self.log_skip(node, "source nn.Module is not in allowlist")
-                    return False
-
-            if self.nn_module_blocklist is not None:
-                if utils.node_comes_from_any_nn_module_in_set(
-                    node, self.nn_module_blocklist
-                ):
-                    self.log_skip(node, "source nn.Module is in blocklist")
-                    return False
+            allowed, reason = self._node_is_allowed(node)
+            if not allowed:
+                self.log_skip(node, reason)
+                return False
 
             # Check if this node is part of a fusable subgraph
             if node in self.fusable_nodes:
@@ -519,12 +551,6 @@ class VulkanPartitioner(Partitioner):
         fusable_subgraphs = vk_patterns.get_all_fusable_subgraphs(
             exported_program.graph_module
         )
-
-        for match in fusable_subgraphs:
-            if isinstance(match, QuantizedLinearMatch):
-                # These qparams are computed inside the fused buffer op and never
-                # materialized as the standalone chooser's textures.
-                match.all_nodes.extend(match.fused_activation_nodes())
 
         # small_texture_limits opts into the conservative 3D texture limit that is
         # compatible with most desktop/laptop GPUs (the Vulkan spec only guarantees

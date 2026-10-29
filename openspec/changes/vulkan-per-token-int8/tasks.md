@@ -25,4 +25,7 @@
 - [x] 5.1 Preserve force_fp16 storage with typed shader variants and FP32 qparams; reproduce and test before/after.
 - [x] 5.2 Support token counts beyond dispatch limits, including dynamic growth; retain multi-consumer coverage.
 - [x] 5.3 Run adjacent and fallback checks, lint, update evidence, push PR 46, and hand final head to parent for Claude re-review.
-- [ ] 5.4 Parent runs independent Claude CLI on the final pushed revision; address further legitimate findings until accepted.
+- [ ] 5.4 Parent reviews the final pushed code/documentation head and independently reruns reproductions; address further legitimate findings until final acceptance. Round-two acceptance was superseded by the shared-activation reproduction.
+
+- [x] 5.5 Reproduce shared activation projections with large dynamic bounds; fix compatible consumer grouping while retaining external-consumer and allow/block-list checks; add registered runtime and partition regressions.
+- [ ] 5.6 Validate shared-activation correction and adjacent paths, update evidence, push normally to PR 46 and freeze the final head for parent review.

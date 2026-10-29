@@ -3723,3 +3723,60 @@ class TestPerTokenInt8Vulkan(unittest.TestCase):
             torch.testing.assert_close(
                 runtime.forward((inp,))[0], converted(inp), rtol=2e-4, atol=2e-4
             )
+
+    def test_pt2e_per_token_int8_shared_projections(self):
+        from executorch.backends.vulkan.serialization.vulkan_graph_serialize import (
+            extract_vk_flatbuffer,
+            flatbuffer_to_vk_graph,
+        )
+
+        class Projections(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.q = torch.nn.Linear(32, 16)
+                self.k = torch.nn.Linear(32, 16)
+
+            def forward(self, x):
+                q, k = self.q(x), self.k(x)
+                return q + k, q, k
+
+        for dynamic in (False, True):
+            with self.subTest(dynamic=dynamic):
+                torch.manual_seed(46)
+                x = torch.randn(3, 32)
+                shapes = ({0: Dim("tokens", min=1, max=65540)},) if dynamic else None
+                prepared = prepare_pt2e(
+                    export(Projections().eval(), (x,), dynamic_shapes=shapes).module(),
+                    VulkanQuantizer().set_global(
+                        get_vulkan_quantization_config(is_dynamic=True)
+                    ),
+                )
+                prepared(x)
+                converted = convert_pt2e(prepared)
+                for target in (
+                    torch.ops.torchao.choose_qparams_affine,
+                    torch.ops.torchao.quantize_affine,
+                    torch.ops.torchao.dequantize_affine,
+                ):
+                    nodes = [n for n in converted.graph.nodes if n.target == target]
+                    self.assertEqual(len(nodes), 1)
+                self.assertEqual(len(nodes[0].users), 2)
+                edge = lower_module(converted, (x,), dynamic_shapes=shapes)
+                runtime = _load_for_executorch_from_buffer(edge.to_executorch().buffer)
+                graphs = [
+                    flatbuffer_to_vk_graph(extract_vk_flatbuffer(m.processed_bytes))
+                    for m in edge.exported_program().graph_module.modules()
+                    if hasattr(m, "processed_bytes")
+                ]
+                self.assertEqual(len(graphs), 1)
+                names = [op.name for op in graphs[0].chain]
+                self.assertEqual(names.count("et_vk.linear_dq8ca_q8csw.default"), 2)
+                self.assertNotIn("torchao.choose_qparams_affine.default", names)
+                for tokens in (3, 65536, 2) if dynamic else (3,):
+                    inp = torch.randn(tokens, 32)
+                    for actual, expected in zip(
+                        runtime.forward((inp,)), converted(inp), strict=True
+                    ):
+                        torch.testing.assert_close(
+                            actual, expected, rtol=2e-4, atol=2e-4
+                        )

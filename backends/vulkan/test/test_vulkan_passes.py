@@ -1767,3 +1767,115 @@ class TestPerTokenInt8LinearFusion(unittest.TestCase):
         fusion._exported_program = ep
         with self.assertRaisesRegex(ValueError, "weight zero points to be zero"):
             fusion(ep.graph_module)
+
+    def test_per_token_int8_shared_activation_partitioning(self):
+        import copy
+
+        import executorch.backends.vulkan.utils as utils
+        from executorch.backends.vulkan.partitioner.vulkan_partitioner import (
+            VulkanSupportedOperators,
+        )
+        from executorch.backends.vulkan.patterns import get_all_fusable_subgraphs
+        from executorch.backends.vulkan.patterns.quantized_linear import (
+            QuantizedLinearMatch,
+        )
+        from executorch.backends.vulkan.quantizer.vulkan_quantizer import (
+            get_symmetric_quantization_config,
+            VulkanQuantizer,
+        )
+
+        class Projections(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.q = torch.nn.Linear(32, 16)
+                self.k = torch.nn.Linear(32, 16)
+
+            def forward(self, x):
+                return self.q(x) + self.k(x)
+
+        x = torch.randn(3, 32)
+        shapes = ({0: torch.export.Dim("tokens", min=1, max=65540)},)
+        prepared = prepare_pt2e(
+            torch.export.export(
+                Projections().eval(), (x,), dynamic_shapes=shapes
+            ).module(),
+            VulkanQuantizer().set_global(
+                get_symmetric_quantization_config(is_dynamic=True)
+            ),
+        )
+        prepared(x)
+        original = to_edge(
+            torch.export.export(convert_pt2e(prepared), (x,), dynamic_shapes=shapes),
+            compile_config=EdgeCompileConfig(_check_ir_validity=False),
+        ).exported_program()
+        for case in (
+            "compatible",
+            "external_qparams",
+            "incompatible_projection",
+            "operator_blocklist",
+            "operator_allowlist",
+            "chooser_blocklist",
+            "chooser_allowlist",
+            "module_blocklist",
+            "module_allowlist",
+        ):
+            with self.subTest(case=case):
+                ep = copy.deepcopy(original)
+                matches = [
+                    match
+                    for match in get_all_fusable_subgraphs(ep.graph_module)
+                    if isinstance(match, QuantizedLinearMatch)
+                ]
+                self.assertEqual(len(matches), 2)
+                first, second = matches
+                self.assertIs(first.dequantize_input_node, second.dequantize_input_node)
+                chooser = first.input_scales_node.args[0]
+                options = {}
+                if case == "external_qparams":
+                    output = next(n for n in ep.graph.nodes if n.op == "output")
+                    output.args = (output.args[0] + (first.input_scales_node,),)
+                elif case == "incompatible_projection":
+                    second.anchor_node.kwargs = {"alpha": 2}
+                elif case.endswith("blocklist") and not case.startswith("module"):
+                    options["operator_blocklist"] = {
+                        (
+                            chooser.target
+                            if case.startswith("chooser")
+                            else second.anchor_node.target
+                        )
+                    }
+                elif case.endswith("allowlist") and not case.startswith("module"):
+                    excluded = (
+                        chooser.target
+                        if case.startswith("chooser")
+                        else second.anchor_node.target
+                    )
+                    options["operator_allowlist"] = {
+                        n.target for n in ep.graph.nodes if n.target != excluded
+                    }
+                elif case.startswith("module"):
+                    for node in ep.graph.nodes:
+                        node.meta["nn_module_stack"] = {
+                            "allowed": ("q", "test.Allowed")
+                        }
+                    second.anchor_node.meta["nn_module_stack"] = {
+                        "blocked": ("k", "test.Blocked")
+                    }
+                    options["nn_module_" + case.split("_")[1]] = {
+                        "test.Blocked" if case.endswith("blocklist") else "test.Allowed"
+                    }
+                support = VulkanSupportedOperators(
+                    utils.DEFAULT_TEXTURE_LIMITS,
+                    utils.DEFAULT_BUFFER_LIMIT,
+                    fusable_subgraphs=matches,
+                    constant_nodes=get_constant_nodes(ep),
+                    **options,
+                )
+                self.assertEqual(chooser in support.fusable_nodes, case == "compatible")
+                self.assertEqual(
+                    support.is_node_supported({}, chooser), case == "compatible"
+                )
+                if case.startswith("operator") or case.startswith("module"):
+                    self.assertFalse(support.is_node_supported({}, second.anchor_node))
+                if case.startswith("module"):
+                    self.assertTrue(support.is_node_supported({}, first.anchor_node))

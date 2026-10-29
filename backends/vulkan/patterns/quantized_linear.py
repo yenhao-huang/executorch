@@ -369,7 +369,9 @@ class QuantizedLinearMatch(PatternMatch):
             and weight_tensor.dtype == torch.int8
         )
 
-    def fused_activation_nodes(self) -> list[torch.fx.Node]:
+    def fused_activation_nodes(
+        self, consuming_nodes: Optional[set[torch.fx.Node]] = None
+    ) -> list[torch.fx.Node]:
         if not self.is_per_token_int8_linear():
             return []
         nodes = [
@@ -379,7 +381,7 @@ class QuantizedLinearMatch(PatternMatch):
             self.input_zeros_node,
             self.input_scales_node.args[0],
         ]
-        consumed = set(self.all_nodes) | set(nodes)
+        consumed = set(self.all_nodes) | set(nodes) | (consuming_nodes or set())
         if any(user not in consumed for node in nodes for user in node.users):
             return []
         return nodes

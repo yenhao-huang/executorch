@@ -10,9 +10,11 @@ Branch: agent/fix-22431
 Baseline: 390bc0618f19276e699a255bd035a35c5296cfa8
 Pull request: https://github.com/yenhao-huang/executorch/pull/46 (OPEN, non-draft)
 Initial implementation commit: 5bb3afb4119823d75e6af9a8d9d60661516226e3
-Review fix commit: 7f295b497a7aad79130ce23e0124a6427b145001 (fork branch and PR head verified)
+Prior FP16/dispatch correction: 7f295b497a7aad79130ce23e0124a6427b145001
+Prior reviewed head: 8c8043807f5de3106a5a1a7d3329a0fc1b1046b7
+Current correction: shared activation projections validated; correction commit pending
 Fork PR base: base/upstream-main-390bc0618f at 390bc0618f19276e699a255bd035a35c5296cfa8
-Outcome: in_progress — revision pushed and verified; parent Claude re-review pending
+Outcome: in_progress — shared activation gap reproduced after round-two acceptance; correction underway
 OpenSpec: openspec/changes/vulkan-per-token-int8
 Report: docs/howard/22431.md
 Logs: ../logs/
@@ -24,8 +26,8 @@ Last updated: 2026-10-29
 | 0. Confirm Repository And Issue | completed | branch/HEAD checked | Exclusive worktree ownership from parent |
 | 1. Check Prior Discussion For Existing Resolution | completed | issue-current.json, issue-comments.json, issue-timeline.json, pr-22432.json, pr-22372.json | Open, no comments; linked corrections do not resolve feature |
 | 2. Read Issue And Repository Context | completed | required skills, AGENTS.md, CONTRIBUTING.md, OpenSpec proposal/design/spec | No community writes |
-| 3. Implement And Test | completed | claude-review/full-regression.log, claude-review/cpp-runtime-final.log | Review fixes: 50 Python tests and 32 INT8 C++ cases passed; before/fixed runtime regression 2 failures to 3 passes. |
-| 4. Review And Commit | completed | claude-review/commit.log, claude-review/lint.log, claude-review/openspec-validate.log | Confirmed half/dispatch issues fixed; lint, commit hook, diff check and OpenSpec passed. |
+| 3. Implement And Test | completed | shared-activation-review/full-regression.log, shared-activation-review/cpp-runtime.log | 52 Python tests and 32 INT8 C++ cases pass; shared projection regression fails before and passes after. |
+| 4. Review And Commit | in_progress | shared-activation-review/lint-final.log, shared-activation-review/openspec-validate.log | Shared projection correction reviewed locally; scoped lint and OpenSpec pass; commit pending. |
 | 5. Open And Follow Through On PR | in_progress | claude-review/fork-branch-readback.txt, claude-review/pr-code-readback.json | Revision 7f295b497a pushed normally and PR 46 head verified; parent Claude re-review pending. |
 | 6. Report Result | in_progress | docs/howard/22431.md | Review evidence updated; independent acceptance pending; physical-GPU/encoder limits retained. |
 
@@ -37,7 +39,7 @@ Optional encoder measurements: blocked; required existing HF CLI environment and
 
 Milestone 2026-10-28: expanded serialized Vulkan regression passed 40 shape/output-width/bias/range combinations, rank-one through rank-four, plus dynamic tokens. Shared-weight sequence passed. C++ test passed 16 cases including texture and buffer weights and dot/no-dot variants. Static tests pass baseline/fixed; enabled INT4 test has identical seven tolerance mismatches on both. Temporary decorators/API edits restored. Fork main is 449 commits behind baseline; use a new fork-only base/upstream-main-390bc0618f snapshot to keep the PR isolated.
 
-Delivery milestone: implementation commit 5bb3afb4119823d75e6af9a8d9d60661516226e3 verified on fork branch agent/fix-22431; fork PR 46 verified OPEN, non-draft, based on the exact requested baseline. No checks or reviews reported. Community timeline readback contains no fork cross-reference. No merge, force push, deletion, community writes or nested workers occurred. Final report and completion record are published in a documentation follow-up commit.
+Initial delivery milestone (historical): implementation commit 5bb3afb4119823d75e6af9a8d9d60661516226e3 verified on fork branch agent/fix-22431; fork PR 46 verified OPEN, non-draft, based on the exact requested baseline. No checks or reviews reported. Community timeline readback contains no fork cross-reference. No merge, force push, deletion, community writes or nested workers occurred. Final report and completion record are published in a documentation follow-up commit.
 
 ## Claude review revision, 2026-10-29
 
@@ -54,3 +56,23 @@ baseline test source; detailed limits and logs are in the report. Required
 workflow docs remain. Parent owns the next Claude pass and final acceptance.
 
 Review handoff: implementation revision 7f295b497a verified on fork PR 46; no GitHub checks or reviews are reported. This documentation follow-up records delivery and remains part of the next parent-reviewed head. Final remote readback is logs/claude-review/pr-final-readback.json under the task parent. No merge or community writes occurred.
+
+
+## Shared activation correction
+
+Parent disproved round-two Claude's assumption that PT2E cannot share activation
+observers. At head 8c8043807f, the registered two-projection test verifies one
+chooser/Q/DQ with two dequantize consumers; static execution passes, dynamic
+max=65540 fails with Missing out variants: torchao::choose_qparams_affine
+(shared-activation-review/registered-before.log). This is a gap in the new feature;
+the legacy per-tensor control also fails, so it is not a demonstrated legacy
+regression. Do not treat round-two acceptance as acceptance of the current fix.
+
+The correction considers consumption across compatible, permitted projections.
+Genuine external qparams and incompatible/excluded consumers do not receive the
+fusion exception. Operator/module allowlists and blocklists are checked before
+the fusion fast path. Registered shared-output runtime and nine partition policy
+cases pass; parent reproducer passes 3/65536/2 dynamic rows. Broad validation passed: 52 Python tests, 32 INT8 C++ cases and existing INT4
+GEMM. Final fork handoff is in progress. No native sources changed or rebuild needed.
+
+Adjacent rerun: enabled static INT8 passes; dynamic INT4 has exactly the same seven baseline mismatches and values. Temporary test adaptations restored. Lint and OpenSpec pass; preparing the shared-activation correction commit.
