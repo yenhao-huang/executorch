@@ -55,7 +55,10 @@ op_index.py implements the guarded equivalent lowering. tests/models.py adds
 SharedGatherRoPE; test_qnn_delegate.py registers the original and smaller shapes
 with eight calibration batches and all-output comparisons. Issue-scoped state,
 acceptance report and OpenSpec artifacts record evidence and blocked physical
-acceptance. No runtime, C++ build, dependencies or public APIs are changed.
+acceptance. No runtime, C++ build or dependencies are changed. The Python
+visitor factory helper `get_node_visitors` now requires the keyword argument
+`backend_type`; external callers must supply their selected QNN backend, as
+the updated in-repository callers do.
 
 Independent review found LPAI does not support GatherNd. Forward the selected
 backend through the visitor factory, support checking and preprocessing, and
