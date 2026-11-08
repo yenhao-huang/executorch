@@ -7,8 +7,8 @@
 """Checks that generated shader names match the names the dispatcher asks for.
 
 A kernel name is built at runtime rather than looked up: `add_binary_op_node`
-concatenates "binary_", the op, a storage suffix and a dtype suffix, then hands
-the result to `VK_KERNEL_FROM_STR`. The yaml, meanwhile, is free to name a
+concatenates "binary_op" (or "binary_cmp" for comparisons), a storage suffix and
+a dtype suffix, then hands the result to `VK_KERNEL_FROM_STR`. The yaml, meanwhile, is free to name a
 variant anything at all. Nothing connects the two, so a variant whose name does
 not follow that shape compiles a shader nothing references and leaves the name
 the dispatcher wants missing.
@@ -24,6 +24,7 @@ drift when a dtype is added.
 """
 
 import importlib.util
+import os
 import re
 import unittest
 from pathlib import Path
@@ -42,7 +43,12 @@ gen_vulkan_spv = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gen_vulkan_spv)
 
 # The yaml templates whose variants `add_binary_op_node` dispatches into.
-_BINARY_TEMPLATES = ("binary_op_buffer", "binary_op_texture")
+_BINARY_BUFFER_TEMPLATE = os.path.join("binary", "binary_op_buffer")
+_BINARY_TEXTURE_TEMPLATE = os.path.join("binary", "binary_op_texture")
+_BINARY_TEMPLATES = (
+    _BINARY_BUFFER_TEMPLATE,
+    _BINARY_TEXTURE_TEMPLATE,
+)
 
 
 def _function_body(text: str, name: str) -> str:
@@ -113,8 +119,8 @@ class TestShaderNames(unittest.TestCase):
         build. Kokoro's synthesizer aborted on it.
         """
         for template, expected in (
-            ("binary_op_buffer", "binary_eq_buffer_int32"),
-            ("binary_op_texture", "binary_eq_texture3d_int32"),
+            (_BINARY_BUFFER_TEMPLATE, "binary_cmp_buffer_int32"),
+            (_BINARY_TEXTURE_TEMPLATE, "binary_cmp_texture3d_int32"),
         ):
             with self.subTest(template=template):
                 self.assertIn(expected, self.names[template])

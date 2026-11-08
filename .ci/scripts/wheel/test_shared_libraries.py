@@ -79,13 +79,16 @@ _KERNEL_SYMBOLS = ("torch::executor::native::abs_out",)
 # strong one elsewhere, so naming one of those would count a definition that may not be the one
 # the process uses.
 _CUDA_BACKEND_SYMBOLS = ("executorch::backends::cuda::load_library",)
-_CUDA_STREAM_SYMBOLS = ("executorch::extension::cuda::getCallerStream",)
+_CUDA_EXTENSION_SYMBOLS = (
+    "executorch::extension::cuda::getCallerStream",
+    "executorch::extension::cuda::internal::getCurrentCUDAStream",
+    "executorch::extension::cuda::CudaAllocator::instance",
+)
 
-# The AOTI shim layer and the stream-guard state that lives with it. This is the state that was
-# genuinely duplicated: extracting the shims with a PUBLIC whole-archive replayed the extraction at
-# every consumer's link, so the guard's thread_local and these shims landed in three shipped binaries
-# at once, and a stream selected through one copy was invisible to the other two. The row above cannot
-# catch that, because its symbol only ever existed in one unconditionally shared library.
+# The AOTI shim layer. This is what was once genuinely duplicated: extracting the shims with a PUBLIC
+# whole-archive replayed the extraction at every consumer's link, so these shims, and the current-stream
+# thread_local that then lived with them, landed in three shipped binaries at once, and a stream selected
+# through one copy was invisible to the other two. That state now lives in the extension library above.
 _AOTI_SHIM_SYMBOLS = (
     "aoti_torch_empty_strided",
     "aoti_torch_delete_tensor_object",
@@ -96,14 +99,14 @@ _AOTI_SHIM_SYMBOLS = (
     # kernel shim is listed rather than a sample, because a partially built library is exactly the
     # failure this row exists to catch.
     "aoti_torch_cuda__weight_int4pack_mm",
-    "aoti_torch_cuda_int4_plain_mm",
-    "aoti_torch_cuda_int5_plain_mm",
-    "aoti_torch_cuda_int6_plain_mm",
-    "aoti_torch_cuda_int8_plain_mm",
     "aoti_torch_cuda_rand",
     "aoti_torch_cuda_randint_low_out",
     "aoti_torch_cuda_sort_stable",
     "aoti_torch_cuda_guard_set_index",
+    "aoti_torch_cuda_index_Tensor",
+    "aoti_torch_index_put_out",
+    "aoti_torch_cuda_scatter_reduce_two_out",
+    "aoti_torch_cuda_scatter_src_out",
 )
 
 _QUANTIZED_KERNEL_SYMBOLS = (
@@ -150,7 +153,11 @@ else:
 # The delegate's own entry points. A second definer means the delegate is compiled
 # into the Python extension as well, which would register it twice in one process.
 _QNN_BACKEND_SYMBOLS = ("QnnExecuTorchBackendRegister",)
-_OPENVINO_BACKEND_SYMBOLS = ("executorch::backends::openvino::OpenvinoBackend",)
+# A member rather than the bare class name, because the PE reader matches MSVC decorated
+# names, which spell a member as ?is_available@OpenvinoBackend@... and never the class alone.
+_OPENVINO_BACKEND_SYMBOLS = (
+    "executorch::backends::openvino::OpenvinoBackend::is_available",
+)
 
 _BUNDLED_XNNPACK_SYMBOLS = ("xnn_create_runtime_v4",)
 
@@ -190,6 +197,8 @@ _MACH_O_MAGIC = frozenset(
         b"\xfe\xed\xfa\xce",
         b"\xca\xfe\xba\xbe",
         b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf",
+        b"\xbf\xba\xfe\xca",
     }
 )
 
@@ -214,6 +223,9 @@ _WINDOWS_IMPORT_WITNESSES = {
         "executorch.dll",
         "executorch::runtime::register_backend",
     ),
+    # The delegate's entry points come from cuda_platform, an archive, so its export list does not
+    # name them either.
+    "CUDA delegate": ("executorch.dll", "executorch::runtime::register_backend"),
 }
 
 _PE_REPORTS: dict = {}
@@ -762,6 +774,127 @@ def _assert_mach_o_architecture_matches(wheel: Path) -> None:
     print(f"\u2713 the wheel is tagged for the architecture it contains ({declared})")
 
 
+# The oldest macOS the wheel supports. The pybind preset sets it, and so does the
+# MACOSX_DEPLOYMENT_TARGET that the pytorch/test-infra wheel build exports.
+_MACOS_MINIMUM = (14, 0)
+
+
+def _macos_minimum_violations(tag: str, minimums: dict) -> tuple[bool, list]:
+    """Whether a macOS tag asks for more than the supported minimum, and which binaries
+    need more than the tag or the supported minimum allows.
+
+    Returned rather than asserted so the decision can be unit tested without a wheel.
+    `minimums` maps each binary to the minimum macOS it declares, or to None when it
+    declares none, which counts against it.
+    """
+    # In macosx_14_0_arm64 the two numbers after the platform name are the version.
+    tagged = tuple(int(part) for part in tag.split("_")[1:3])
+    allowed = min(tagged, _MACOS_MINIMUM)
+    return tagged > _MACOS_MINIMUM, sorted(
+        name
+        for name, minimum in minimums.items()
+        if minimum is None or minimum > allowed
+    )
+
+
+def _metallib_minimum(data: bytes) -> tuple[int, int] | None:
+    """The newest macOS that a kernel in a Metal library targets, or None if none says.
+
+    Each kernel keeps its target, such as air64-apple-macosx14.0.0, or
+    air64_v26-apple-macosx14.0.0 from newer compilers.
+    """
+    versions = re.findall(rb"air64[\w.]*-apple-macosx(\d+)\.(\d+)", data)
+    return max(((int(major), int(minor)) for major, minor in versions), default=None)
+
+
+def _mach_o_minimum(load_commands: str) -> tuple[int, int] | None:
+    """The newest minimum macOS in `otool -l` output, or None if it declares none.
+
+    A universal binary declares one for each architecture. Targets below macOS 10.14
+    store it as the version of the older LC_VERSION_MIN_MACOSX command.
+    """
+    versions = re.findall(
+        r"(?:LC_BUILD_VERSION.*?minos|LC_VERSION_MIN_MACOSX.*?version) (\d+)\.(\d+)",
+        load_commands,
+        re.DOTALL,
+    )
+    return max(((int(major), int(minor)) for major, minor in versions), default=None)
+
+
+def _assert_minimum_macos(wheel: Path) -> None:
+    """Fail if a macOS wheel needs a newer macOS than the project supports.
+
+    bdist_wheel raises the tag, and only warns, when a .so or .dylib needs a newer major
+    macOS, so pip on an older macOS quietly picks an older release. It ignores a newer
+    minor version, executables such as flatc, and Metal libraries, so those install and
+    then fail to load. Installing the wheel on the oldest supported macOS used to catch
+    both, and no build runner runs that macOS any more. This reads the minimum that each
+    Mach-O file and Metal library declares, so it cannot see a call to a newer macOS API
+    that skips its availability check, or code built for a newer macOS that was linked
+    into a library, since the linker records the library's own minimum and only warns.
+    """
+    otool = _tool("otool")
+    assert otool is not None, (
+        "otool is required to read the minimum macOS of the wheel's binaries, and it "
+        "was not found"
+    )
+    claimed = wheel.name.split("-")[-1].removesuffix(".whl")
+    floor = ".".join(str(part) for part in _MACOS_MINIMUM)
+
+    minimums, unreadable = {}, []
+    with tempfile.TemporaryDirectory() as unpacked:
+        with zipfile.ZipFile(wheel) as archive:
+            archive.extractall(unpacked)
+        root = Path(unpacked)
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            name = str(path.relative_to(root))
+            if path.suffix == ".metallib":
+                minimum = _metallib_minimum(path.read_bytes())
+            else:
+                with path.open("rb") as handle:
+                    if handle.read(4) not in _MACH_O_MAGIC:
+                        continue
+                result = subprocess.run(
+                    [otool, "-arch", "all", "-l", str(path)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    unreadable.append(f"{name}: {result.stderr.strip()[:120]}")
+                    continue
+                minimum = _mach_o_minimum(result.stdout)
+            minimums[name] = minimum
+
+    assert not unreadable, (
+        f"otool could not read these Mach-O files in {wheel.name}, so the minimum macOS "
+        f"check covered less than the wheel ships: {unreadable}"
+    )
+    assert minimums, (
+        f"the wheel {wheel.name} contains no Mach-O files or Metal libraries, so "
+        f"nothing was checked against macOS {floor}"
+    )
+    tag_too_new, too_new = _macos_minimum_violations(claimed, minimums)
+    assert not too_new, (
+        f"these files in {wheel.name} declare no minimum macOS, or a newer one than "
+        f"its tag or macOS {floor} allows: "
+        + ", ".join(
+            f"{name} ({'.'.join(map(str, minimums[name] or ())) or 'none'})"
+            for name in too_new
+        )
+    )
+    assert not tag_too_new, (
+        f"the wheel {wheel.name} is tagged for a macOS newer than {floor}, so pip on "
+        f"macOS {floor} will not install it"
+    )
+    print(
+        f"\u2713 the wheel's tag allows macOS {floor} and no Mach-O file or Metal "
+        "library in it declares a newer minimum"
+    )
+
+
 def _shipped_object_patterns() -> list[str]:
     """Filename patterns for every shipped loadable object.
 
@@ -1095,22 +1228,23 @@ def _wheel_cuda_train() -> str:
 # wheel is inspected, and a row cannot call that at import time.
 _REQUIRED_ON_A_CUDA_WHEEL = "cuda-wheel-only"
 
-# Marker for a row whose owner every Linux wheel carries and no macOS wheel does.
-_REQUIRED_ON_LINUX = "linux-only"
+# Marker for a row whose owner every Linux and Windows wheel carries and no macOS wheel
+# does.
+_REQUIRED_ON_LINUX_AND_WINDOWS = "linux-and-windows-only"
 # Marker for a row whose owner every macOS wheel carries and no other wheel does.
 # The Core ML delegate is built on every macOS wheel, so its presence is decidable
 # from the installed wheel and a macOS wheel that dropped it should fail rather than
 # quietly regress to folding it into the Python extension.
 _REQUIRED_ON_MACOS = "macos-only"
-# Narrower than the marker above on purpose. The Qualcomm SDK the delegate builds
-# against is published for Linux x86_64 only, so the aarch64 Linux wheels ship no such
-# library and demanding it there would fail a wheel that is correct. Reusing the
-# Linux-wide marker would do exactly that.
+# Narrower than the Linux and Windows marker on purpose. The Qualcomm SDK the delegate
+# builds against is published for Linux x86_64 only, so the aarch64 Linux wheels ship no
+# such library and demanding it there would fail a wheel that is correct. Reusing that
+# marker would do exactly that.
 _REQUIRED_ON_LINUX_X86 = "linux-x86-only"
 # Marker for a row whose owner every aarch64 wheel carries, macOS and Linux alike. The
 # TorchAO kernels are selected by the processor rather than the operating system, so
-# neither the macOS nor the Linux marker describes them and a fixed False would let a
-# wheel that silently dropped the library pass.
+# neither the macOS nor the Linux and Windows marker describes them and a fixed False
+# would let a wheel that silently dropped the library pass.
 _REQUIRED_ON_AARCH64 = "aarch64-only"
 
 
@@ -1118,8 +1252,8 @@ def _resolve_required(required):
     """Turn a row's requirement marker into the answer for the installed wheel."""
     if required == _REQUIRED_ON_A_CUDA_WHEEL:
         return bool(_wheel_cuda_train())
-    if required == _REQUIRED_ON_LINUX:
-        return sys.platform == "linux"
+    if required == _REQUIRED_ON_LINUX_AND_WINDOWS:
+        return sys.platform in ("linux", "win32")
     if required == _REQUIRED_ON_MACOS:
         return sys.platform == "darwin"
     if required == _REQUIRED_ON_LINUX_X86:
@@ -1236,8 +1370,8 @@ _OWNED_COMPONENTS = (
         _REQUIRED_ON_A_CUDA_WHEEL,
     ),
     (
-        "CUDA stream helper",
-        _CUDA_STREAM_SYMBOLS,
+        "CUDA allocator and stream helpers",
+        _CUDA_EXTENSION_SYMBOLS,
         _library_file_name("libexecutorch_extension_cuda"),
         _REQUIRED_ON_A_CUDA_WHEEL,
     ),
@@ -1277,15 +1411,15 @@ _OWNED_COMPONENTS = (
         _library_file_name("libexecutorch_backend_mlx"),
         False,
     ),
-    # Required on Linux, where packaging turns the backend on for every non-minimal
-    # build. A fixed False passed a wheel that had compiled the delegate back into the
-    # extension: no library ships, so the row skips, and one definer inside the
+    # Required on Linux and Windows, where packaging turns the backend on for every
+    # non-minimal build. A fixed False passed a wheel that had compiled the delegate back
+    # into the extension: no library ships, so the row skips, and one definer inside the
     # extension is exactly the monolithic layout a definer count cannot distinguish.
     (
         "OpenVINO delegate",
         _OPENVINO_BACKEND_SYMBOLS,
         _library_file_name("libexecutorch_backend_openvino"),
-        _REQUIRED_ON_LINUX,
+        _REQUIRED_ON_LINUX_AND_WINDOWS,
     ),
     # Required on Linux x86_64 only, where the Qualcomm SDK the delegate builds against
     # is published. A fixed False would pass a wheel that compiled the delegate back
@@ -1794,9 +1928,13 @@ import sys
 if sys.argv[3] == "torch":
     import torch  # noqa: F401
 
-# executorch/lib, which a C++ program copies beside itself and the package's entry points
-# register. Whether they do is test_package_entry_points_load_their_libraries.
-os.add_dll_directory(sys.argv[2])
+# The directories the package ships DLLs in, the ones the Linux libraries record relative
+# search paths for: executorch/lib, which a C++ program copies beside itself and the
+# package's entry points register (test_package_entry_points_load_their_libraries checks
+# that they do), and backends/cuda, where the CUDA delegate's shim layer ships.
+for directory in [sys.argv[2], *sys.argv[4:]]:
+    if os.path.isdir(directory):
+        os.add_dll_directory(directory)
 ctypes.WinDLL(sys.argv[1])
 """
 
@@ -1830,6 +1968,7 @@ def _assert_shipped_libraries_load_on_windows(root: Path, package_dir: Path) -> 
                 str(target),
                 str(lib_dir),
                 torch_needed,
+                str(root / "backends" / "cuda"),
             ],
             capture_output=True,
             text=True,
@@ -2311,16 +2450,20 @@ def _tag_architectures_match(claimed: str, supported: str):
 def test_wheel_platform_tag() -> None:
     """The wheel's declared platform tag must name the architecture it was built for.
 
-    Only the architecture. auditwheel cannot certify a glibc baseline for this wheel:
-    it depends on torch without vendoring torch's libraries, so the contents reference
-    libtorch.so from outside any manylinux policy and auditwheel reports a plain
-    linux_<arch>. That is the expected answer for a torch-dependent wheel rather than
-    a defect, and the manylinux tag on the file comes from the build image. Asserting
-    the baseline here failed every correct wheel.
+    On Linux, only the architecture. auditwheel cannot certify a glibc baseline for
+    this wheel: it depends on torch without vendoring torch's libraries, so the contents
+    reference libtorch.so from outside any manylinux policy and auditwheel reports a
+    plain linux_<arch>. That is the expected answer for a torch-dependent wheel rather
+    than a defect, and the manylinux tag on the file comes from the build image.
+    Asserting the baseline here failed every correct wheel.
 
     The architecture is still worth checking, because a wheel labelled with the wrong
     one installs on machines it cannot run on at all, and that is a mistake this can
     actually catch.
+
+    On macOS the tag also names the oldest macOS the wheel installs on. That is
+    checked too, because a build that moves it only warns, and no CI job runs that
+    macOS any more.
     """
     wheels = _find_wheel_files()
     if not wheels:
@@ -2340,6 +2483,7 @@ def test_wheel_platform_tag() -> None:
     # correct wheel to fail the job.
     if sys.platform == "darwin":
         _assert_mach_o_architecture_matches(wheels[-1])
+        _assert_minimum_macos(wheels[-1])
         return
     if _WINDOWS:
         _assert_pe_architecture_matches(wheels[-1])
@@ -2757,6 +2901,9 @@ def test_extension_contains_no_component() -> None:
             marker in name
             for marker in ("kernels_quantized", "kernels_torchao", "extension_cuda")
         )
+        # Not on Windows, where a CUDA program cannot be lowered, so the delegate ships for
+        # C++ applications and the extension deliberately does not link it.
+        and not (_WINDOWS and "backend_cuda" in name)
     }
     unused = sorted(expected - needed)
     assert not unused, (
