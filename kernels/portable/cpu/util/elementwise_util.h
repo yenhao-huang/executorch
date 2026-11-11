@@ -94,11 +94,11 @@ inline void dtype_specialized_elementwise_fn_impl(
 
 #if defined(ET_USE_PYTORCH_HEADERS) && ET_USE_PYTORCH_HEADERS
   if constexpr (can_use_vectorized<CTYPE_COMPUTE, Op, Args...>()) {
-    const bool any_is_broadcasted =
-        !(torch::executor::internal::sizes_match_ignoring_leading_1s(
-              inputs.first->sizes(), out.sizes()) &&
-          ...);
-    if (!any_is_broadcasted) {
+    const bool can_traverse_linearly = !support_noncontiguous_tensors &&
+        (torch::executor::internal::tensors_match_ignoring_leading_1s(
+             *inputs.first, out) &&
+         ...);
+    if (can_traverse_linearly) {
       using Vec = at::vec::Vectorized<CTYPE_COMPUTE>;
       ::executorch::extension::parallel_for(
           0,
@@ -177,9 +177,9 @@ inline void dtype_specialized_elementwise_fn_impl(
 
         CTYPE_OUT* const data_out = out.mutable_data_ptr<CTYPE_OUT>();
 
-        const auto range =
-            BroadcastIndexesRange<kNumInputs, support_noncontiguous_tensors>(
-                out, (*inputs.first)...);
+        const auto range = BroadcastIndexesRange<
+            kNumInputs + 1,
+            support_noncontiguous_tensors>(out, (*inputs.first)..., out);
         auto begin_it = range.begin();
         begin_it += begin;
         for (; (*begin_it)[0] < end; ++begin_it) {
@@ -188,7 +188,8 @@ inline void dtype_specialized_elementwise_fn_impl(
           for (const auto idx : c10::irange(kNumInputs)) {
             loaded_inputs[idx] = inputs_data_ptrs[idx][indexes[idx + 1]];
           }
-          data_out[indexes[0]] = std::apply(compute_fun, loaded_inputs);
+          data_out[indexes[kNumInputs + 1]] =
+              std::apply(compute_fun, loaded_inputs);
         }
       });
 }
@@ -254,9 +255,9 @@ inline void apply_elementwise_fn_generic_impl(
       out.numel(),
       ::executorch::extension::internal::GRAIN_SIZE,
       [&](const auto begin, const auto end) {
-        const auto range =
-            BroadcastIndexesRange<kNumInputs, support_noncontiguous_tensors>(
-                out, (*inputs.first)...);
+        const auto range = BroadcastIndexesRange<
+            kNumInputs + 1,
+            support_noncontiguous_tensors>(out, (*inputs.first)..., out);
         auto begin_it = range.begin();
         begin_it += begin;
         for (; (*begin_it)[0] < end; ++begin_it) {
@@ -270,7 +271,7 @@ inline void apply_elementwise_fn_generic_impl(
           }
           auto result = std::apply(compute_fun, loaded_inputs);
           store_compute_to_out(
-              result, &data_out[indexes[0] * out_element_size]);
+              result, &data_out[indexes[kNumInputs + 1] * out_element_size]);
         }
       });
 }

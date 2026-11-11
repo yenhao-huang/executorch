@@ -2,6 +2,15 @@ load("@fbsource//xplat/executorch/build:runtime_wrapper.bzl", "runtime")
 
 def define_common_targets():
     runtime.cxx_test(
+        name = "elementwise_util_test",
+        srcs = ["elementwise_util_test.cpp"],
+        deps = [
+            "//executorch/kernels/portable/cpu/util:elementwise_util",
+            "//executorch/runtime/core/exec_aten/testing_util:tensor_util",
+        ],
+    )
+
+    runtime.cxx_test(
         name = "broadcast_test",
         srcs = ["broadcast_test.cpp"],
         deps = [

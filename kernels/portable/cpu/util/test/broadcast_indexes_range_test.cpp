@@ -264,3 +264,65 @@ TEST(BroadcastIndexesRangeTest, FourDBroadcastingWithOneDimsInOutput) {
   four_d_broadcasting_test<2, 3, 1, 5>();
   four_d_broadcasting_test<2, 1, 3, 1>();
 }
+
+TEST(BroadcastIndexesRangeTest, SameShapeDifferentLayouts) {
+  TensorFactory<ScalarType::Int> tf;
+  Tensor out = tf.zeros({1, 2, 2, 2});
+  Tensor input = tf.make_channels_last({1, 2, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0});
+  const auto range = BroadcastIndexesRange<2>(out, input, out);
+  const std::vector<std::array<ssize_t, 3>> expected = {
+      {0, 0, 0},
+      {1, 2, 1},
+      {2, 4, 2},
+      {3, 6, 3},
+      {4, 1, 4},
+      {5, 3, 5},
+      {6, 5, 6},
+      {7, 7, 7}};
+  EXPECT_EQ(range_to_vec(range), expected);
+  test_operator_plus(range);
+}
+
+TEST(BroadcastIndexesRangeTest, ChannelsLastOutputAsInput) {
+  TensorFactory<ScalarType::Int> tf;
+  Tensor out = tf.make_channels_last({1, 2, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0});
+  Tensor input = tf.make_channels_last({1, 2, 1, 1}, {10, 20});
+  const auto range = BroadcastIndexesRange<2>(out, input, out);
+  const std::vector<std::array<ssize_t, 3>> expected = {
+      {0, 0, 0},
+      {1, 0, 2},
+      {2, 0, 4},
+      {3, 0, 6},
+      {4, 1, 1},
+      {5, 1, 3},
+      {6, 1, 5},
+      {7, 1, 7}};
+  EXPECT_EQ(range_to_vec(range), expected);
+  test_operator_plus(range);
+}
+
+TEST(BroadcastIndexesRangeTest, MatchingChannelsLastLayouts) {
+  TensorFactory<ScalarType::Int> tf;
+  Tensor out = tf.make_channels_last({1, 2, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0});
+  Tensor input =
+      tf.make_with_dimorder({2, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0}, {1, 2, 0});
+  const auto range = BroadcastIndexesRange<2>(out, input, out);
+  ssize_t count = 0;
+  for (const auto [iteration, input_offset, output_offset] : range) {
+    EXPECT_EQ(iteration, count++);
+    EXPECT_EQ(input_offset, iteration);
+    EXPECT_EQ(output_offset, iteration);
+  }
+  test_operator_plus(range);
+}
+
+TEST(BroadcastIndexesRangeTest, SingletonStridesDoNotPreventLinearTraversal) {
+  TensorFactory<ScalarType::Int> tf;
+  Tensor out = tf.make_channels_last({1, 1, 2, 2}, {0, 0, 0, 0});
+  Tensor input = tf.zeros({2, 2});
+  const auto range = BroadcastIndexesRange<2>(out, input, out);
+  const std::vector<std::array<ssize_t, 3>> expected = {
+      {0, 0, 0}, {1, 1, 1}, {2, 2, 2}, {3, 3, 3}};
+  EXPECT_EQ(range_to_vec(range), expected);
+  test_operator_plus(range);
+}

@@ -361,6 +361,24 @@ class OpMulOutTest : public OperatorTest {
   }
 };
 
+TEST_F(OpMulOutTest, ChannelsLastBroadcastInt) {
+  TensorFactory<ScalarType::Int> tf;
+  Tensor a = tf.make_channels_last({1, 2, 1, 2}, {1, 3, 2, 4});
+  Tensor b = tf.make_channels_last({1, 2, 1, 1}, {10, 20});
+  Tensor out = tf.make_channels_last({1, 2, 1, 2}, {0, 0, 0, 0});
+  op_mul_out(a, b, out);
+  EXPECT_TENSOR_EQ(out, tf.make_channels_last({1, 2, 1, 2}, {10, 60, 20, 80}));
+}
+
+TEST_F(OpMulOutTest, ChannelsLastBroadcastFloat) {
+  TensorFactory<ScalarType::Float> tf;
+  Tensor a = tf.make_channels_last({1, 2, 1, 2}, {1, 3, 2, 4});
+  Tensor b = tf.make_channels_last({1, 2, 1, 1}, {10, 20});
+  Tensor out = tf.make_channels_last({1, 2, 1, 2}, {0, 0, 0, 0});
+  op_mul_out(a, b, out);
+  EXPECT_TENSOR_EQ(out, tf.make_channels_last({1, 2, 1, 2}, {10, 60, 20, 80}));
+}
+
 class OpMulScalarOutTest : public OperatorTest {
  protected:
   Tensor&
