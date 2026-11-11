@@ -11,8 +11,9 @@ set(EXECUTORCH_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../..)
 include(${EXECUTORCH_ROOT}/tools/cmake/Test.cmake)
 include(${EXECUTORCH_ROOT}/tools/cmake/Utils.cmake)
 
-set(_test_srcs broadcast_indexes_range_test.cpp broadcast_test.cpp
-               reduce_test.cpp vectorized_math_test.cpp
+set(_test_srcs
+    broadcast_indexes_range_test.cpp broadcast_test.cpp
+    elementwise_util_test.cpp reduce_test.cpp vectorized_math_test.cpp
 )
 
 et_cxx_test(

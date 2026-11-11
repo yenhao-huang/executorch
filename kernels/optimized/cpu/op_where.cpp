@@ -57,11 +57,12 @@ Tensor& opt_where_out(
           out_numel,
           ::executorch::extension::internal::GRAIN_SIZE,
           [&](const auto begin, const auto end) {
-            auto range = BroadcastIndexesRange<3>(out, a, b, cond);
+            auto range = BroadcastIndexesRange<4>(out, a, b, cond, out);
             auto begin_it = range.begin();
             begin_it += begin;
             for (; (*begin_it)[0] < end; ++begin_it) {
-              const auto [out_index, a_index, b_index, cond_index] = *begin_it;
+              const auto [unused, a_index, b_index, cond_index, out_index] =
+                  *begin_it;
               data_out[out_index] =
                   data_cond[cond_index] ? data_a[a_index] : data_b[b_index];
             }

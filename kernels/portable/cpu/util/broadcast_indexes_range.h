@@ -43,6 +43,25 @@ inline bool sizes_match_ignoring_leading_1s(
       std::equal(lhs_begin, lhs_end, rhs_begin);
 }
 
+// Dense tensors can share a linear traversal only when corresponding
+// non-singleton dimensions have matching strides.
+inline bool tensors_match_ignoring_leading_1s(
+    const Tensor& lhs,
+    const Tensor& rhs) {
+  if (!sizes_match_ignoring_leading_1s(lhs.sizes(), rhs.sizes())) {
+    return false;
+  }
+  for (auto lhs_dim = lhs.dim() - 1, rhs_dim = rhs.dim() - 1;
+       lhs_dim >= 0 && rhs_dim >= 0;
+       --lhs_dim, --rhs_dim) {
+    if (lhs.size(lhs_dim) != 1 &&
+        lhs.strides()[lhs_dim] != rhs.strides()[rhs_dim]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 template <
     std::size_t kNumInputs,
     bool support_noncontiguous_input_tensors = false>
@@ -60,10 +79,7 @@ class BroadcastIndexesIterator {
   explicit BroadcastIndexesIterator(const Tensor& output, const Args&... args)
       : output_dim_or_zero_if_no_broadcasting_(
             !support_noncontiguous_input_tensors &&
-                    (sizes_match_ignoring_leading_1s(
-                         args.sizes(),
-                         output.sizes()) &&
-                     ...)
+                    (tensors_match_ignoring_leading_1s(args, output) && ...)
                 ? 0
                 : output.dim()),
         output_shape_(output.sizes()) {
@@ -326,8 +342,8 @@ class BroadcastIndexesIterator<1, false> {
  * auto* output_data = output.mutable_data_ptr<OutputType>();
  * const auto* a_data = a.mutable_data_ptr<AType>();
  * const auto* b_data = b.mutable_data_ptr<BType>();
- * for (const auto [output_index, a_index, b_index] :
- *      BroadcastIndexesRange<2>(output, a, b)) {
+ * for (const auto [iteration, a_index, b_index, output_index] :
+ *      BroadcastIndexesRange<3>(output, a, b, output)) {
  *   // Access output_data[output_index], a_data[a_index], and b_data[b_index].
  * }
  *
@@ -337,13 +353,13 @@ class BroadcastIndexesIterator<1, false> {
  * linearize_access_indexes(), BroadcastIndexesRange avoids expensive
  * division and modulo operations on each iteration.
  *
- * The support_noncontiguous_input_tensors argument disables an
- * optimization that causes the iterators not to respect strides in
- * some cases for input tensors. This optimization is normally safe
- * because ExecuTorch tensors are contiguous. Non-contiguous output
- * tensors are currently never supported (but note that this can be
- * worked around by ignoring the output index and providing the true
- * output as an extra input).
+ * The first index is an iteration counter, not a stride-aware output
+ * offset. Pass the output as an extra input, as above, to address outputs
+ * with a non-default layout.
+ *
+ * The support_noncontiguous_input_tensors argument disables the linear
+ * traversal optimization for inputs that are not dense. By default,
+ * inputs are assumed to be dense, including channels-last tensors.
  */
 template <
     std::size_t kNumInputs,

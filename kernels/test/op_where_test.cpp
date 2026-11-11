@@ -163,6 +163,29 @@ class OpWhereOutTest : public OperatorTest {
   }
 };
 
+TEST_F(OpWhereOutTest, ChannelsLastBroadcast) {
+  TensorFactory<ScalarType::Bool> tf_cond;
+  TensorFactory<ScalarType::Float> tf;
+  Tensor cond = tf_cond.make_channels_last({1, 2, 1, 1}, {true, false});
+  Tensor a = tf.make_channels_last({1, 2, 1, 2}, {1, 3, 2, 4});
+  Tensor b = tf.make_channels_last({1, 2, 1, 2}, {10, 30, 20, 40});
+  Tensor out = tf.make_channels_last({1, 2, 1, 2}, {0, 0, 0, 0});
+  op_where_self_out(cond, a, b, out);
+  EXPECT_TENSOR_EQ(out, tf.make_channels_last({1, 2, 1, 2}, {1, 30, 2, 40}));
+}
+
+TEST_F(OpWhereOutTest, ChannelsLastBroadcastMixedDtypes) {
+  TensorFactory<ScalarType::Bool> tf_cond;
+  TensorFactory<ScalarType::Int> tf_int;
+  TensorFactory<ScalarType::Float> tf;
+  Tensor cond = tf_cond.make_channels_last({1, 2, 1, 1}, {true, false});
+  Tensor a = tf_int.make_channels_last({1, 2, 1, 2}, {1, 3, 2, 4});
+  Tensor b = tf.make_channels_last({1, 2, 1, 2}, {10, 30, 20, 40});
+  Tensor out = tf.make_channels_last({1, 2, 1, 2}, {0, 0, 0, 0});
+  op_where_self_out(cond, a, b, out);
+  EXPECT_TENSOR_EQ(out, tf.make_channels_last({1, 2, 1, 2}, {1, 30, 2, 40}));
+}
+
 //
 // Correctness Test
 //

@@ -258,8 +258,8 @@ inline void apply_binary_elementwise_fn(
   const CTYPE_B* const data_b = b.const_data_ptr<CTYPE_B>();
   CTYPE_OUT* const data_out = out.mutable_data_ptr<CTYPE_OUT>();
 
-  for (const auto [out_index, a_index, b_index] :
-       BroadcastIndexesRange<2>(out, a, b)) {
+  for (const auto [unused, a_index, b_index, out_index] :
+       BroadcastIndexesRange<3>(out, a, b, out)) {
     data_out[out_index] = compute_fun(data_a[a_index], data_b[b_index]);
   }
 }
@@ -286,8 +286,8 @@ inline void apply_ternary_elementwise_fn(
   const CTYPE_C* const data_c = c.const_data_ptr<CTYPE_C>();
   CTYPE_OUT* const data_out = out.mutable_data_ptr<CTYPE_OUT>();
 
-  for (const auto [out_index, a_index, b_index, c_index] :
-       BroadcastIndexesRange<3>(out, a, b, c)) {
+  for (const auto [unused, a_index, b_index, c_index, out_index] :
+       BroadcastIndexesRange<4>(out, a, b, c, out)) {
     data_out[out_index] =
         compute_fun(data_a[a_index], data_b[b_index], data_c[c_index]);
   }
