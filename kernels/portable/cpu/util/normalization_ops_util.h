@@ -113,9 +113,22 @@ bool check_layer_norm_args(
     IntArrayRef normalized_shape,
     const std::optional<Tensor>& weight,
     const std::optional<Tensor>& bias,
-    Tensor& out,
-    Tensor& mean_out,
-    Tensor& rstd_out);
+    const Tensor& out,
+    const Tensor& mean_out,
+    const Tensor& rstd_out);
+
+bool check_layer_norm_backward_args(
+    const Tensor& grad_out,
+    const Tensor& input,
+    IntArrayRef normalized_shape,
+    const Tensor& mean,
+    const Tensor& rstd,
+    const std::optional<Tensor>& weight,
+    const std::optional<Tensor>& bias,
+    executorch::aten::ArrayRef<bool> output_mask,
+    const Tensor& grad_input,
+    const Tensor& grad_weight,
+    const Tensor& grad_bias);
 
 void get_layer_norm_out_target_size(
     const Tensor& in,

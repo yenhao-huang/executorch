@@ -79,9 +79,9 @@ bool check_layer_norm_args(
     IntArrayRef normalized_shape,
     const std::optional<Tensor>& weight,
     const std::optional<Tensor>& bias,
-    Tensor& out,
-    Tensor& mean_out,
-    Tensor& rstd_out) {
+    const Tensor& out,
+    const Tensor& mean_out,
+    const Tensor& rstd_out) {
   size_t ndim = normalized_shape.size();
   ET_CHECK_OR_RETURN_FALSE(
       ndim >= 1,
@@ -127,6 +127,53 @@ bool check_layer_norm_args(
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, out));
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, mean_out));
   ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, rstd_out));
+  return true;
+}
+
+bool check_layer_norm_backward_args(
+    const Tensor& grad_out,
+    const Tensor& input,
+    IntArrayRef normalized_shape,
+    const Tensor& mean,
+    const Tensor& rstd,
+    const std::optional<Tensor>& weight,
+    const std::optional<Tensor>& bias,
+    executorch::aten::ArrayRef<bool> output_mask,
+    const Tensor& grad_input,
+    const Tensor& grad_weight,
+    const Tensor& grad_bias) {
+  ET_LOG_AND_RETURN_IF_FALSE(check_layer_norm_args(
+      input, normalized_shape, weight, bias, grad_out, mean, rstd));
+  ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_shape(grad_out, input));
+
+  const size_t leading =
+      getLeadingDims(input, input.dim() - normalized_shape.size());
+  ET_CHECK_OR_RETURN_FALSE(
+      static_cast<size_t>(mean.numel()) == leading &&
+          static_cast<size_t>(rstd.numel()) == leading,
+      "Expected mean and rstd to have %zu elements; mean.numel() = %" ET_PRI_TENSOR_NUMEL
+      ", rstd.numel() = %" ET_PRI_TENSOR_NUMEL,
+      leading,
+      mean.numel(),
+      rstd.numel());
+
+  ET_CHECK_OR_RETURN_FALSE(
+      output_mask.size() == 3,
+      "Expected output_mask to have 3 elements; output_mask.size() = %zu",
+      output_mask.size());
+  if (output_mask[0]) {
+    ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(input, grad_input));
+  }
+  if (output_mask[1]) {
+    ET_CHECK_OR_RETURN_FALSE(
+        weight.has_value(), "Expected weight when output_mask[1] is set");
+    ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(input, grad_weight));
+  }
+  if (output_mask[2]) {
+    ET_CHECK_OR_RETURN_FALSE(
+        bias.has_value(), "Expected bias when output_mask[2] is set");
+    ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(input, grad_bias));
+  }
   return true;
 }
 

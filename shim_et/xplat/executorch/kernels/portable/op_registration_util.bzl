@@ -991,6 +991,12 @@ ATEN_OPS = (
         ],
     ),
     op_target(
+        name = "op_native_layer_norm_backward",
+        deps = [
+            "//executorch/kernels/portable/cpu/util:normalization_ops_util",
+        ],
+    ),
+    op_target(
         name = "op_ne",
         deps = [
             ":scalar_utils",
