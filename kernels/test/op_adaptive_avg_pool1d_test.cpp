@@ -167,13 +167,6 @@ TEST_F(OpAdaptiveAvgPool1DOutTest, NegativeOutputSize) {
   ET_EXPECT_KERNEL_FAILURE(context_, pool(in, {-1}, out));
 }
 
-TEST_F(OpAdaptiveAvgPool1DOutTest, OutputSizeExceedsSizesType) {
-  TensorFactory<ScalarType::Float> tf;
-  auto in = tf.ones({1, 1, 4});
-  auto out = tf.zeros({1, 1, 2});
-  ET_EXPECT_KERNEL_FAILURE(context_, pool(in, {4294967298}, out));
-}
-
 TEST_F(OpAdaptiveAvgPool1DOutTest, WrongOutputSizeRank) {
   TensorFactory<ScalarType::Float> tf;
   auto in = tf.ones({1, 1, 4});
@@ -210,6 +203,13 @@ TEST_F(OpAdaptiveAvgPool1DOutTest, HalfAccumulatesInFloat) {
   auto out = tf.zeros({1, 1, 1});
   pool(in, {1}, out);
   EXPECT_TENSOR_EQ(out, tf.full({1, 1, 1}, 60000));
+}
+
+TEST_F(OpAdaptiveAvgPool1DOutTest, OutputSizeExceedsSizesType) {
+  TensorFactory<ScalarType::Float> tf;
+  auto in = tf.ones({1, 1, 4});
+  auto out = tf.zeros({1, 1, 2});
+  ET_EXPECT_KERNEL_FAILURE(context_, pool(in, {4294967298}, out));
 }
 
 TEST_F(OpAdaptiveAvgPool1DOutTest, WrongOutputRank) {
