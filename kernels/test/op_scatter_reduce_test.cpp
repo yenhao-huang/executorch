@@ -253,6 +253,111 @@ TEST_F(OpScatterReduceTwoOutTest, HalfAndBFloat16) {
   EXPECT_TENSOR_CLOSE(bf16_out, tf_bf16.make({3}, {-1.5, 2, 4}));
 }
 
+TEST_F(OpScatterReduceTwoOutTest, HalfAndBFloat16AccumulateInFloat) {
+  TensorFactory<ScalarType::Half> tf_half;
+  TensorFactory<ScalarType::BFloat16> tf_bf16;
+  TensorFactory<ScalarType::Long> tf_long;
+
+  Tensor index = tf_long.zeros({4096});
+  Tensor half_out = tf_half.zeros({3});
+
+  op_scatter_reduce_two_out(
+      tf_half.zeros({3}),
+      0,
+      index,
+      tf_half.ones({4096}),
+      "sum",
+      true,
+      half_out);
+  EXPECT_TENSOR_CLOSE(half_out, tf_half.make({3}, {4096, 0, 0}));
+
+  op_scatter_reduce_two_out(
+      tf_half.zeros({3}),
+      0,
+      index,
+      tf_half.ones({4096}),
+      "mean",
+      true,
+      half_out);
+  EXPECT_TENSOR_CLOSE(half_out, tf_half.make({3}, {1, 0, 0}));
+
+  op_scatter_reduce_two_out(
+      tf_half.ones({3}),
+      0,
+      index,
+      tf_half.full({4096}, 1.001),
+      "prod",
+      false,
+      half_out);
+  EXPECT_TENSOR_CLOSE(half_out, tf_half.make({3}, {54.5, 1, 1}));
+
+  Tensor bf16_out = tf_bf16.zeros({3});
+  op_scatter_reduce_two_out(
+      tf_bf16.zeros({3}),
+      0,
+      tf_long.zeros({1000}),
+      tf_bf16.ones({1000}),
+      "sum",
+      true,
+      bf16_out);
+  EXPECT_TENSOR_CLOSE(bf16_out, tf_bf16.make({3}, {1000, 0, 0}));
+}
+
+TEST_F(OpScatterReduceTwoOutTest, NarrowIntegerMeanCountWraps) {
+  TensorFactory<ScalarType::Byte> tf;
+  TensorFactory<ScalarType::Char> tf_char;
+  TensorFactory<ScalarType::Long> tf_long;
+
+  Tensor self = tf.make({2}, {7, 3});
+  Tensor out = tf.zeros({2});
+
+  op_scatter_reduce_two_out(
+      self, 0, tf_long.zeros({256}), tf.full({256}, 2), "mean", false, out);
+  EXPECT_TENSOR_EQ(out, tf.make({2}, {0, 3}));
+
+  op_scatter_reduce_two_out(
+      self, 0, tf_long.zeros({255}), tf.full({255}, 2), "mean", true, out);
+  EXPECT_TENSOR_EQ(out, tf.make({2}, {5, 3}));
+
+  Tensor char_out = tf_char.zeros({1});
+  op_scatter_reduce_two_out(
+      tf_char.zeros({1}),
+      0,
+      tf_long.zeros({200}),
+      tf_char.ones({200}),
+      "mean",
+      false,
+      char_out);
+  EXPECT_TENSOR_EQ(char_out, tf_char.make({1}, {1}));
+}
+
+TEST_F(OpScatterReduceTwoOutTest, ZeroDimIndexWithOneDimSrc) {
+  TensorFactory<ScalarType::Float> tf;
+  TensorFactory<ScalarType::Long> tf_long;
+
+  Tensor out = tf.zeros({3});
+
+  op_scatter_reduce_two_out(
+      tf.zeros({3}),
+      0,
+      tf_long.make({}, {1}),
+      tf.make({1}, {5}),
+      "sum",
+      true,
+      out);
+  EXPECT_TENSOR_CLOSE(out, tf.make({3}, {0, 5, 0}));
+
+  op_scatter_reduce_two_out(
+      tf.ones({3}),
+      0,
+      tf_long.make({}, {2}),
+      tf.make({1}, {5}),
+      "prod",
+      false,
+      out);
+  EXPECT_TENSOR_CLOSE(out, tf.make({3}, {1, 1, 5}));
+}
+
 TEST_F(OpScatterReduceTwoOutTest, BoolWithoutSelf) {
   TensorFactory<ScalarType::Bool> tf;
   TensorFactory<ScalarType::Long> tf_long;

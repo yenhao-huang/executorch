@@ -86,7 +86,13 @@ CTYPE reduce_pair(ReduceMode mode, CTYPE acc, CTYPE value) {
 template <typename CTYPE>
 CTYPE mean_divide(CTYPE sum, int64_t count) {
   if constexpr (std::is_integral_v<CTYPE>) {
-    return utils::floor_divide<CTYPE>(sum, static_cast<CTYPE>(count));
+    // ATen keeps the count in the input dtype, so it wraps for narrow types,
+    // and replaces a zero count with one.
+    CTYPE divisor = static_cast<CTYPE>(count);
+    if (divisor == 0) {
+      divisor = 1;
+    }
+    return utils::floor_divide<CTYPE>(sum, divisor);
   } else {
     return static_cast<CTYPE>(sum / static_cast<CTYPE>(count));
   }
@@ -107,34 +113,36 @@ size_t output_index(
   return coordinateToIndex(out, out_coord);
 }
 
-template <typename CTYPE>
+template <typename CTYPE, typename ACC>
 void scatter_reduce_helper(
     int64_t dim,
     const Tensor& index,
     const Tensor& src,
     ReduceMode mode,
     bool include_self,
-    Tensor& out,
+    const Tensor& out,
+    ACC* acc,
     int64_t* counts) {
   const int64_t* const index_data = index.const_data_ptr<int64_t>();
   const CTYPE* const src_data = src.const_data_ptr<CTYPE>();
-  CTYPE* const out_data = out.mutable_data_ptr<CTYPE>();
+  // A 0-dim index leaves ix_coord unwritten while src may still be 1-dim.
   // @lint-ignore CLANGTIDY facebook-hte-CArray
-  size_t ix_coord[kTensorDimensionLimit];
+  size_t ix_coord[kTensorDimensionLimit] = {};
 
   if (!include_self) {
-    const CTYPE identity = reduce_identity<CTYPE>(mode);
+    const ACC identity = reduce_identity<ACC>(mode);
     for (const auto ix : c10::irange(index.numel())) {
       indexToCoordinate(index, ix, ix_coord);
-      out_data[output_index(out, dim, index_data[ix], ix_coord)] = identity;
+      acc[output_index(out, dim, index_data[ix], ix_coord)] = identity;
     }
   }
 
   for (const auto ix : c10::irange(index.numel())) {
     indexToCoordinate(index, ix, ix_coord);
     const size_t out_ix = output_index(out, dim, index_data[ix], ix_coord);
-    const CTYPE value = src_data[coordinateToIndex(src, ix_coord)];
-    out_data[out_ix] = reduce_pair(mode, out_data[out_ix], value);
+    const ACC value =
+        static_cast<ACC>(src_data[coordinateToIndex(src, ix_coord)]);
+    acc[out_ix] = reduce_pair(mode, acc[out_ix], value);
     if (counts != nullptr) {
       counts[out_ix] += 1;
     }
@@ -143,7 +151,7 @@ void scatter_reduce_helper(
   if (counts != nullptr) {
     for (const auto i : c10::irange(out.numel())) {
       if (counts[i] > 1) {
-        out_data[i] = mean_divide(out_data[i], counts[i]);
+        acc[i] = mean_divide(acc[i], counts[i]);
       }
     }
   }
@@ -202,13 +210,23 @@ Tensor& scatter_reduce_two_out(
   static constexpr const char op_name[] = "scatter_reduce.two_out";
 
   ET_SWITCH_REALHBBF16_TYPES(self.scalar_type(), ctx, op_name, CTYPE, [&]() {
-    std::memcpy(
-        out.mutable_data_ptr<CTYPE>(),
-        self.const_data_ptr<CTYPE>(),
-        self.nbytes());
-    if (index.numel() > 0) {
+    CTYPE* const out_data = out.mutable_data_ptr<CTYPE>();
+    std::memcpy(out_data, self.const_data_ptr<CTYPE>(), self.nbytes());
+    if (index.numel() == 0) {
+      return;
+    }
+    // Accumulate Half/BFloat16 in float, as ATen does.
+    if constexpr (c10::is_reduced_floating_point_v<CTYPE>) {
+      Result<void*> acc_mem = ctx.allocate_temp(out.numel() * sizeof(float));
+      ET_KERNEL_CHECK(ctx, acc_mem.ok(), MemoryAllocationFailed, );
+      float* const acc = static_cast<float*>(acc_mem.get());
+      std::copy(out_data, out_data + out.numel(), acc);
       scatter_reduce_helper<CTYPE>(
-          dim, index, src, mode, include_self, out, counts);
+          dim, index, src, mode, include_self, out, acc, counts);
+      std::copy(acc, acc + out.numel(), out_data);
+    } else {
+      scatter_reduce_helper<CTYPE>(
+          dim, index, src, mode, include_self, out, out_data, counts);
     }
   });
 
