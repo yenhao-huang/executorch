@@ -358,6 +358,12 @@ ATEN_OPS = (
         ],
     ),
     op_target(
+        name = "op_avg_pool2d_backward",
+        deps = [
+            "//executorch/kernels/portable/cpu/util:kernel_ops_util",
+        ],
+    ),
+    op_target(
         name = "op_bitwise_and",
         deps = [
             ":scalar_utils",
