@@ -462,6 +462,9 @@ ATEN_OPS = (
         name = "op_clone",
     ),
     op_target(
+        name = "op_col2im",
+    ),
+    op_target(
         name = "op_constant_pad_nd",
         deps = [
             ":scalar_utils",

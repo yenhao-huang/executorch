@@ -123,6 +123,8 @@
 
 - op: clone.out
 
+- op: col2im.out
+
 - op: constant_pad_nd.out
 
 - op: conv1d.out
