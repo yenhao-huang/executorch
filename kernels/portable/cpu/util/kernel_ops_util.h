@@ -463,6 +463,17 @@ void apply_kernel_1d_reduce_then_map_fn(
 // Operator specific utility functions
 //
 
+bool check_adaptive_avg_pool1d_args(
+    const Tensor& in,
+    const IntArrayRef output_size,
+    const Tensor& out);
+
+void get_adaptive_avg_pool1d_out_target_size(
+    const Tensor& in,
+    const IntArrayRef output_size,
+    executorch::aten::SizesType* const out_sizes,
+    size_t* const out_ndim);
+
 bool check_adaptive_avg_pool2d_args(
     const Tensor& in,
     const IntArrayRef output_size,

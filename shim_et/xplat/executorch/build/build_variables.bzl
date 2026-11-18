@@ -77,6 +77,7 @@ PORTABLE_KERNELS_SRCS = [
     "kernels/portable/cpu/op_abs.cpp",
     "kernels/portable/cpu/op_acos.cpp",
     "kernels/portable/cpu/op_acosh.cpp",
+    "kernels/portable/cpu/op_adaptive_avg_pool1d.cpp",
     "kernels/portable/cpu/op_add.cpp",
     "kernels/portable/cpu/op_addmm.cpp",
     "kernels/portable/cpu/op_alias_copy.cpp",
