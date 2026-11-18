@@ -204,6 +204,7 @@ PORTABLE_KERNELS_SRCS = [
     "kernels/portable/cpu/op_scalar_tensor.cpp",
     "kernels/portable/cpu/op_scatter.cpp",
     "kernels/portable/cpu/op_scatter_add.cpp",
+    "kernels/portable/cpu/op_scatter_reduce.cpp",
     "kernels/portable/cpu/op_select_copy.cpp",
     "kernels/portable/cpu/op_select_scatter.cpp",
     "kernels/portable/cpu/op_sigmoid.cpp",
