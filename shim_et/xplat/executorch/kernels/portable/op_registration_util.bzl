@@ -236,6 +236,12 @@ ATEN_OPS = (
         ],
     ),
     op_target(
+        name = "op_adaptive_avg_pool1d",
+        deps = [
+            "//executorch/kernels/portable/cpu/util:kernel_ops_util",
+        ],
+    ),
+    op_target(
         name = "op_add",
         deps = [
             "//executorch/kernels/portable/cpu/util:broadcast_util",

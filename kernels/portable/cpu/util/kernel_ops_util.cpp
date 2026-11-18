@@ -264,6 +264,46 @@ bool check_arange_args(double start, double end, double step, Tensor& out) {
   return true;
 }
 
+bool check_adaptive_avg_pool1d_args(
+    const Tensor& in,
+    const IntArrayRef output_size,
+    const Tensor& out) {
+  ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dtype(in, out));
+  ET_LOG_AND_RETURN_IF_FALSE(tensors_have_same_dim_order(in, out));
+  ET_LOG_AND_RETURN_IF_FALSE(tensor_is_default_dim_order(in));
+
+  ET_CHECK_OR_RETURN_FALSE(
+      (in.dim() == 2 || in.dim() == 3) && in.size(in.dim() - 1) > 0,
+      "Expected 2D or 3D (batch mode) tensor with non-empty length for input; in.dim() = %" ET_PRI_TENSOR_DIM,
+      in.dim());
+
+  ET_CHECK_OR_RETURN_FALSE(
+      output_size.size() == 1,
+      "output_size must have exactly 1 element, but got %zu",
+      output_size.size());
+
+  ET_CHECK_OR_RETURN_FALSE(
+      output_size[0] >= 0 &&
+          output_size[0] <=
+              std::numeric_limits<executorch::aten::SizesType>::max(),
+      "output_size must be non-negative and fit in SizesType, but got %" PRId64,
+      output_size[0]);
+
+  return true;
+}
+
+void get_adaptive_avg_pool1d_out_target_size(
+    const Tensor& in,
+    const IntArrayRef output_size,
+    executorch::aten::SizesType* const out_sizes,
+    size_t* const out_ndim) {
+  *out_ndim = in.dim();
+  for (size_t d = 0; d < *out_ndim - 1; ++d) {
+    out_sizes[d] = in.size(d);
+  }
+  out_sizes[*out_ndim - 1] = output_size[0];
+}
+
 bool check_adaptive_avg_pool2d_args(
     const Tensor& in,
     const IntArrayRef output_size,

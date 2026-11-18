@@ -161,6 +161,7 @@ set(all_test_sources
     "op_abs_test.cpp"
     "op_acos_test.cpp"
     "op_acosh_test.cpp"
+    "op_adaptive_avg_pool1d_test.cpp"
     "op_add_test.cpp"
     "op_addmm_test.cpp"
     "op_alias_copy_test.cpp"

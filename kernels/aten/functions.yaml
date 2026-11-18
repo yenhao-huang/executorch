@@ -50,6 +50,8 @@
 
 - op: acosh.out
 
+- op: adaptive_avg_pool1d.out
+
 - op: add.out
 
 - op: add.Scalar_out
