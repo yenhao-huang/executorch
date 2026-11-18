@@ -6,9 +6,11 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <limits>
 #include <type_traits>
 
 #include <c10/util/irange.h>
+#include <c10/util/safe_numerics.h>
 #include <executorch/runtime/kernel/kernel_includes.h>
 
 namespace torch {
@@ -65,6 +67,13 @@ bool check_col2im_args(
       ", %" PRId64 ")",
       output_size[0],
       output_size[1]);
+  constexpr int64_t kMaxSize =
+      std::numeric_limits<executorch::aten::SizesType>::max();
+  ET_CHECK_OR_RETURN_FALSE(
+      output_size[0] <= kMaxSize && output_size[1] <= kMaxSize,
+      "output_size (%" PRId64 ", %" PRId64 ") exceeds the maximum tensor size",
+      output_size[0],
+      output_size[1]);
 
   ET_CHECK_OR_RETURN_FALSE(
       (in.dim() == 2 && in.size(0) > 0 && in.size(1) > 0) ||
@@ -73,7 +82,12 @@ bool check_col2im_args(
       in.dim());
 
   const int64_t channels = in.size(in.dim() - 2);
-  const int64_t kernel_numel = kernel_size[0] * kernel_size[1];
+  int64_t kernel_numel = 0;
+  ET_CHECK_OR_RETURN_FALSE(
+      !c10::mul_overflows(kernel_size[0], kernel_size[1], &kernel_numel),
+      "The product of kernel_size (%" PRId64 ", %" PRId64 ") overflowed",
+      kernel_size[0],
+      kernel_size[1]);
   ET_CHECK_OR_RETURN_FALSE(
       channels % kernel_numel == 0,
       "Expected size of input's channel dimension (%" PRId64
@@ -83,13 +97,23 @@ bool check_col2im_args(
 
   int64_t num_blocks = 1;
   for (const auto i : c10::irange(2)) {
-    const int64_t span = output_size[i] + 2 * padding[i] -
-        dilation[i] * (kernel_size[i] - 1) - 1;
+    int64_t padded_size = 0;
+    int64_t effective_kernel = 0;
+    ET_CHECK_OR_RETURN_FALSE(
+        !c10::mul_overflows(padding[i], int64_t{2}, &padded_size) &&
+            !c10::add_overflows(padded_size, output_size[i], &padded_size) &&
+            !c10::mul_overflows(
+                dilation[i], kernel_size[i] - 1, &effective_kernel),
+        "Sliding block size along dimension %d overflowed",
+        static_cast<int>(i));
+    const int64_t span = padded_size - effective_kernel - 1;
     ET_CHECK_OR_RETURN_FALSE(
         span >= 0,
         "Calculated number of sliding blocks along dimension %d must be at least one",
         static_cast<int>(i));
-    num_blocks *= span / stride[i] + 1;
+    ET_CHECK_OR_RETURN_FALSE(
+        !c10::mul_overflows(num_blocks, span / stride[i] + 1, &num_blocks),
+        "Calculated number of sliding blocks overflowed");
   }
   ET_CHECK_OR_RETURN_FALSE(
       in.size(in.dim() - 1) == num_blocks,

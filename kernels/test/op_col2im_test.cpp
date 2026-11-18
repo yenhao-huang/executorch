@@ -12,6 +12,7 @@
 #include <executorch/runtime/core/exec_aten/testing_util/tensor_util.h>
 #include <gtest/gtest.h>
 #include <initializer_list>
+#include <limits>
 #include <vector>
 
 using executorch::aten::Half;
@@ -226,6 +227,56 @@ TEST_F(OpCol2ImOutTest, ZeroOutputSize) {
   ET_EXPECT_KERNEL_FAILURE(
       context_, col2im(in, {0, 0}, {1, 1}, {1, 1}, {1, 1}, {1, 1}, out));
 }
+
+TEST_F(OpCol2ImOutTest, KernelSizeProductOverflows) {
+  TensorFactory<ScalarType::Float> tf;
+  auto in = tf.ones({1, 1, 1});
+  auto out = tf.zeros({1, 1, 1, 1});
+  ET_EXPECT_KERNEL_FAILURE(
+      context_,
+      col2im(
+          in,
+          {1, 1},
+          {int64_t{1} << 32, int64_t{1} << 32},
+          {1, 1},
+          {0, 0},
+          {1, 1},
+          out));
+}
+
+#ifndef USE_ATEN_LIB
+TEST_F(OpCol2ImOutTest, OutputSizeExceedsSizesType) {
+  TensorFactory<ScalarType::Float> tf;
+  auto in = tf.ones({1, 1, 1});
+  auto out = tf.zeros({1, 1, 1, 1});
+  ET_EXPECT_KERNEL_FAILURE(
+      context_,
+      col2im(
+          in,
+          {(int64_t{1} << 32) + 1, 1},
+          {1, 1},
+          {1, 1},
+          {0, 0},
+          {int64_t{1} << 33, 1},
+          out));
+}
+
+TEST_F(OpCol2ImOutTest, PaddingOverflows) {
+  TensorFactory<ScalarType::Float> tf;
+  auto in = tf.ones({1, 1, 1});
+  auto out = tf.zeros({1, 1, 1, 1});
+  ET_EXPECT_KERNEL_FAILURE(
+      context_,
+      col2im(
+          in,
+          {1, 1},
+          {1, 1},
+          {1, 1},
+          {std::numeric_limits<int64_t>::max() / 2 + 1, 0},
+          {1, 1},
+          out));
+}
+#endif
 
 TEST_F(OpCol2ImOutTest, WrongParameterLength) {
   TensorFactory<ScalarType::Float> tf;
