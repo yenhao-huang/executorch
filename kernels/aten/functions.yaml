@@ -301,6 +301,8 @@
 
 - op: native_layer_norm.out
 
+- op: native_layer_norm_backward.out
+
 - op: ne.Scalar_out
 
 - op: ne.Tensor_out

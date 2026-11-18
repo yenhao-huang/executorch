@@ -174,6 +174,7 @@ PORTABLE_KERNELS_SRCS = [
     "kernels/portable/cpu/op_native_dropout.cpp",
     "kernels/portable/cpu/op_native_group_norm.cpp",
     "kernels/portable/cpu/op_native_layer_norm.cpp",
+    "kernels/portable/cpu/op_native_layer_norm_backward.cpp",
     "kernels/portable/cpu/op_ne.cpp",
     "kernels/portable/cpu/op_neg.cpp",
     "kernels/portable/cpu/op_nonzero.cpp",
