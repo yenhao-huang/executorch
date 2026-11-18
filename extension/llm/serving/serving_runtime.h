@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include <executorch/extension/llm/batching/executor.h>
+#include <executorch/extension/llm/batching/prefix_cache.h>
 #include <executorch/extension/llm/batching/scheduler.h>
 #include <executorch/extension/llm/serving/request_handle.h>
 #include <executorch/extension/llm/serving/types.h>
@@ -33,9 +35,14 @@ namespace extension {
 namespace llm {
 namespace serving {
 
+// Initial captures the prompt end of each generation that creates its session,
+// including every anonymous request but not the first generation after an
+// explicit open or reset. Every captures the prompt end of every generation.
+enum class ET_EXPERIMENTAL PromptEndCapture { Initial, Every };
+
 struct ET_EXPERIMENTAL ServingRuntimeConfig {
   std::size_t max_sessions = 1;
-  // Text-generation context bound and reported metadata; 0 means unknown.
+  // Decoder-position context bound and reported metadata; 0 means unknown.
   std::size_t max_context_length = 0;
   // Queued, executing, and delivery-fenced lifecycle/generation-start
   // operations, excluding completion callbacks. Must be non-zero.
@@ -51,18 +58,65 @@ struct ET_EXPERIMENTAL ServingRuntimeConfig {
   std::vector<batching::Token> default_stop_tokens = {};
   // Used only for an unset request limit when max_context_length is unknown.
   std::int32_t default_max_new_tokens = 256;
-  // Opt-in prefix reuse for new text sessions; zero disables caching.
-  // Explicit open, reset, and same-session replay bypass the cache. Snapshots
-  // may outlive their source; misses/refusals fall back to full prefill.
-  // Provision max_sessions + prefix_cache_capacity + 1 physical executor rows
-  // when enabled. Backend numerical parity requires model-specific validation.
+  // Shared snapshots for matching full prompts, including retries and the
+  // first generation after open/reset. Zero disables reuse. When enabled,
+  // provision max_sessions + prefix_cache_capacity + resolved_prefix_captures()
+  // rows.
   std::size_t prefix_cache_capacity = 0;
+  // Capture at absolute interval multiples and the initial prompt end.
+  // Requires cache capacity; zero disables periodic capture.
+  std::size_t prefix_checkpoint_interval = 0;
+  // Without an interval or custom policy, prompt ends are captured best effort:
+  // one already retained is refreshed instead of cloned again, and a snapshot
+  // is published and its transient row released at the request's first update
+  // after the clone settles, or when the request finishes. Every requires cache
+  // capacity and is rejected with an interval or policy, whose serialized
+  // checkpoint lane would drop prompt ends while another checkpoint is pending.
+  PromptEndCapture prefix_checkpoint_prompt_end = PromptEndCapture::Initial;
+  // Override the interval and prompt-end capture with increasing checkpoints
+  // in (start, prompt.size()]; return prompt.size() to keep the prompt end.
+  // Invalid or throwing policies skip capture. Requires cache capacity. Runs
+  // on control; must not block or reenter the runtime.
+  std::function<std::vector<batching::PrefixCheckpoint>(
+      const batching::PrefixIdentity& prompt,
+      batching::Position start,
+      bool opening)>
+      prefix_checkpoint_policy = {};
+  // Empty uses global LRU without protected early checkpoints.
+  // Runs on control; must not block or reenter the runtime.
+  batching::PrefixCache::RetentionPolicy prefix_cache_retention = {};
+  // Transient rows shared by prompt capture and named-session replacement.
+  // Zero matches request concurrency, bounded by max_sessions; replacements
+  // compete with prompt captures for these rows.
+  // Periodic/custom checkpoints need at most two automatic rows because
+  // collection is serialized; one replacement may overlap. Prompt-end capture
+  // keeps the concurrent budget. Positive values override sizing.
+  std::size_t max_prefix_captures = 0;
+
+  std::size_t resolved_prefix_captures() const {
+    if (prefix_cache_capacity == 0) {
+      return 0;
+    }
+    if (max_prefix_captures != 0) {
+      return max_prefix_captures;
+    }
+    const auto concurrency = std::min(max_sessions, max_requests);
+    return prefix_checkpoint_interval || prefix_checkpoint_policy
+        ? std::min(concurrency, std::size_t{2})
+        : concurrency;
+  }
 };
 
 // nullopt acknowledges success. Dropping a future does not cancel its
 // operation.
 using LifecycleResult ET_EXPERIMENTAL = std::optional<ServingError>;
 using LifecycleCallback ET_EXPERIMENTAL = std::function<void(LifecycleResult)>;
+struct ET_EXPERIMENTAL CloseResult {
+  LifecycleResult error;
+  // Meaningful on success: false means the session was already absent.
+  bool existed = false;
+};
+using CloseCallback ET_EXPERIMENTAL = std::function<void(CloseResult)>;
 using GenerateResult ET_EXPERIMENTAL =
     std::variant<RequestHandle, ServingError>;
 
@@ -70,10 +124,10 @@ class ET_EXPERIMENTAL ServingRuntime {
  public:
   // Owns one Runner and its scheduler. The borrowed executor must outlive
   // shutdown/destruction and must not be driven by another Runner concurrently.
-  // Initialization happens on the engine thread. A null scheduler or zero
-  // session, operation, request, or event/token limit leaves an inert runtime:
-  // no threads start, info().ready is false, and operations return
-  // InvalidArgument.
+  // Initialization happens on the engine thread. A null scheduler, a zero
+  // session, operation, request, or event/token limit, or prefix settings that
+  // break their documented requirements leave an inert runtime: no threads
+  // start, info().ready is false, and operations return InvalidArgument.
   ServingRuntime(
       batching::Executor& executor,
       std::unique_ptr<batching::Scheduler> scheduler,
@@ -84,7 +138,8 @@ class ET_EXPERIMENTAL ServingRuntime {
       batching::Executor& executor,
       std::unique_ptr<batching::Scheduler> scheduler,
       const tokenizers::Tokenizer& tokenizer,
-      ServingRuntimeConfig config);
+      ServingRuntimeConfig config,
+      ModelPreparer model_preparer = {});
   ~ServingRuntime();
 
   ServingRuntime(const ServingRuntime&) = delete;
@@ -113,6 +168,8 @@ class ET_EXPERIMENTAL ServingRuntime {
   // Opens may queue during initialization; success means an empty session is
   // owned, or the key was already open. An initial open failure releases its
   // slot. Opening an unavailable key fails with NotReady; use reset to retry.
+  // Opening an existing key preserves its state. Subsequent generation may
+  // reuse shared snapshots matching the supplied full prompt.
   void open_session_async(std::string key, LifecycleCallback on_complete);
   std::future<LifecycleResult> open_session_async(std::string key);
 
@@ -122,12 +179,18 @@ class ET_EXPERIMENTAL ServingRuntime {
   void close_session_async(std::string key, LifecycleCallback on_complete);
   std::future<LifecycleResult> close_session_async(std::string key);
 
-  // Cold replacement, retaining the key and logical slot throughout. Success
-  // means reopening and old-response callback cleanup completed. Failure
-  // destroys the old state and leaves the
-  // key unavailable, still reserving its slot until reset succeeds or close
-  // releases it. A missing key returns SessionNotFound. Cancels the old
-  // request; stale completion cannot claim the replacement. No prefix reuse.
+  // Same idempotent close, additionally reporting whether a slot existed.
+  void close_session_with_result_async(
+      std::string key,
+      CloseCallback on_complete);
+
+  // Discards live state and history, retaining the key and logical slot.
+  // Success means reopening and old-response callback cleanup completed.
+  // Failure destroys the old state and leaves the key unavailable, still
+  // reserving its slot until reset succeeds or close releases it. A missing key
+  // returns SessionNotFound. Cancels the old request; stale completion cannot
+  // claim the replacement. Shared snapshots remain available to subsequent
+  // generation with a matching full prompt.
   void reset_session_async(std::string key, LifecycleCallback on_complete);
   std::future<LifecycleResult> reset_session_async(std::string key);
 
@@ -138,8 +201,11 @@ class ET_EXPERIMENTAL ServingRuntime {
   // Same-key execution overlap is Busy. Work admitted after close/reset waits
   // for its acknowledgement before preparation or execution. That fence covers
   // earlier rendered text (including final flush), terminal delivery, and sink
-  // capture cleanup. Exact strict prefixes continue; other histories
-  // cold-replay without caching. Sinks share one delivery thread and must do
+  // capture cleanup. Exact strict prefixes continue. With prefix caching
+  // enabled, replacements and retries may reuse matching shared snapshots;
+  // clean replacements may also clone a common committed live prefix.
+  // Unusable live state is discarded; absent a usable snapshot, prefill starts
+  // from the full supplied prompt. Sinks share one delivery thread and must do
   // short, bounded work: no blocking I/O, waits for runtime work, or
   // synchronous shutdown/destruction of the runtime. A text/flush sink throw
   // disables output and selects a failure. A terminal sink throw is logged;
@@ -147,10 +213,32 @@ class ET_EXPERIMENTAL ServingRuntime {
   // Before terminal invocation, this request's session claim and admission
   // are released. Nonblocking follow-up submission is allowed but may still
   // be rejected; wait()/done() remain callback-lifetime barriers.
-  // The lifecycle-only constructor rejects text generation with NotReady.
+  // Model preparation runs for every source prompt. Optional complete identity
+  // permits mixed-prefix reuse; missing identity cold-replays. Resend all image
+  // and text context as part of each full prompt, including for named sessions.
+  // Metadata/options errors and unsupported prepared inputs return
+  // InvalidArgument without replacing existing content. Executor::accepts()
+  // is checked on the engine thread before replacement; later engine admission
+  // or execution failure does not restore content already replaced. Generation
+  // needs a tokenizer for output; the lifecycle-only constructor returns
+  // NotReady.
   GenerateResult generate(
       std::optional<std::string> key,
       PromptInput prompt,
+      GenerationOptions options,
+      std::function<void(GenerationEvent)> on_event);
+
+  // Deferred preparation uses the same bounded admission and lifecycle fences.
+  // Invoked at most once on control, after options/session validation and
+  // before destructive replacement; cancelled or rejected work may skip
+  // invocation. Errors leave history intact. Exceptions become Internal errors
+  // when enabled. Invoked callback captures are released on control when the
+  // invocation exits. All captures are released outside locks before
+  // done()/wait() and close/reset acknowledgement. Neither the callback nor its
+  // capture destructors may wait for runtime work or shutdown.
+  GenerateResult generate(
+      std::optional<std::string> key,
+      PromptPreparation prepare,
       GenerationOptions options,
       std::function<void(GenerationEvent)> on_event);
 
@@ -159,6 +247,9 @@ class ET_EXPERIMENTAL ServingRuntime {
   // opening, reopening, and unavailable keys, but not commands still waiting
   // to reserve a slot.
   ServingInfo info() const;
+  // Decoded default EOS markers for adapters that hide output after EOS while
+  // generation continues. nullopt if no tokenizer or any marker cannot decode.
+  std::optional<std::vector<std::string>> default_stop_strings() const;
 
   // Idempotent, including concurrent callers. Stops admission, completes all
   // accepted operations/requests, and joins control, Runner, and delivery
