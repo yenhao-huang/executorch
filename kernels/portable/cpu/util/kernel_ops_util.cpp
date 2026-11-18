@@ -283,8 +283,10 @@ bool check_adaptive_avg_pool1d_args(
       output_size.size());
 
   ET_CHECK_OR_RETURN_FALSE(
-      output_size[0] >= 0,
-      "output_size must be non-negative, but got %" PRId64,
+      output_size[0] >= 0 &&
+          output_size[0] <=
+              std::numeric_limits<executorch::aten::SizesType>::max(),
+      "output_size must be non-negative and fit in SizesType, but got %" PRId64,
       output_size[0]);
 
   return true;

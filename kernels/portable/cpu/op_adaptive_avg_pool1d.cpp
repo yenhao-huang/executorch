@@ -57,7 +57,7 @@ Tensor& adaptive_avg_pool1d_out(
     CTYPE* const out_ptr = out.mutable_data_ptr<CTYPE>();
 
     const int64_t in_L = in.size(in.dim() - 1);
-    const int64_t out_L = output_size[0];
+    const int64_t out_L = out.size(out.dim() - 1);
     const int64_t rows = in.numel() / in_L;
 
     for (int64_t r = 0; r < rows; ++r) {
