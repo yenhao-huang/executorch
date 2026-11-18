@@ -145,6 +145,12 @@ std::tuple<Tensor&, Tensor&, Tensor&> native_layer_norm_backward_out(
 
   ET_KERNEL_CHECK(
       ctx,
+      tensor_is_default_dim_order(mean) && tensor_is_default_dim_order(rstd),
+      InvalidArgument,
+      ret_val);
+
+  ET_KERNEL_CHECK(
+      ctx,
       tensors_have_same_dim_order(input, grad_out),
       InvalidArgument,
       ret_val);
@@ -173,12 +179,19 @@ std::tuple<Tensor&, Tensor&, Tensor&> native_layer_norm_backward_out(
   if (output_mask[1]) {
     ET_KERNEL_CHECK(
         ctx,
+        tensor_is_default_dim_order(grad_weight),
+        InvalidArgument,
+        ret_val);
+    ET_KERNEL_CHECK(
+        ctx,
         resize_tensor(grad_weight, weight.value().sizes()) == Error::Ok,
         InvalidArgument,
         ret_val);
   }
 
   if (output_mask[2]) {
+    ET_KERNEL_CHECK(
+        ctx, tensor_is_default_dim_order(grad_bias), InvalidArgument, ret_val);
     ET_KERNEL_CHECK(
         ctx,
         resize_tensor(grad_bias, bias.value().sizes()) == Error::Ok,

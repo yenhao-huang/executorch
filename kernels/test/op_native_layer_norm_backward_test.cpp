@@ -482,3 +482,39 @@ TEST_F(OpNativeLayerNormBackwardInvalidArgsTest, NonDefaultDimOrderDies) {
   normalized_shape = {2};
   expect_args_rejected();
 }
+
+TEST_F(OpNativeLayerNormBackwardInvalidArgsTest, NonDefaultDimOrderMeanDies) {
+  ET_SKIP_IF(
+      torch::executor::testing::SupportedFeatures::get()->is_aten,
+      "ATen kernel can handle non-default dim order");
+  input = tf.ones({1, 3, 2, 2});
+  grad_out = tf.ones({1, 3, 2, 2});
+  grad_input = tf.zeros({1, 3, 2, 2});
+  mean = tf.zeros_channels_last({1, 3, 2, 1});
+  rstd = tf.channels_last_like(tf.ones({1, 3, 2, 1}));
+  weight = tf.ones({2});
+  bias = tf.zeros({2});
+  grad_weight = tf.zeros({2});
+  grad_bias = tf.zeros({2});
+  normalized_shape = {2};
+  expect_args_rejected();
+}
+
+TEST_F(
+    OpNativeLayerNormBackwardInvalidArgsTest,
+    NonDefaultDimOrderGradWeightDies) {
+  ET_SKIP_IF(
+      torch::executor::testing::SupportedFeatures::get()->is_aten,
+      "ATen kernel can handle non-default dim order");
+  input = tf.ones({1, 2, 2, 2});
+  grad_out = tf.ones({1, 2, 2, 2});
+  grad_input = tf.zeros({1, 2, 2, 2});
+  mean = tf.zeros({1, 1, 1, 1});
+  rstd = tf.ones({1, 1, 1, 1});
+  weight = tf.ones({1, 2, 2, 2});
+  bias = tf.zeros({1, 2, 2, 2});
+  grad_weight = tf.zeros_channels_last({1, 2, 2, 2});
+  grad_bias = tf.zeros({1, 2, 2, 2});
+  normalized_shape = {1, 2, 2, 2};
+  expect_args_rejected();
+}
