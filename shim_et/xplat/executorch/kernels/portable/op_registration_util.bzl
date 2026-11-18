@@ -1191,6 +1191,7 @@ ATEN_OPS = (
         name = "op_scatter_reduce",
         deps = [
             "//executorch/kernels/portable/cpu/util:index_util",
+            "//executorch/kernels/portable/cpu/util:math_util",
             "//executorch/runtime/core/exec_aten/util:scalar_type_util",
             "//executorch/runtime/core/exec_aten/util:tensor_util",
         ],

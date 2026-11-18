@@ -8,12 +8,14 @@
 
 #include <c10/util/irange.h>
 #include <executorch/kernels/portable/cpu/util/index_util.h>
+#include <executorch/kernels/portable/cpu/util/math_util.h>
 #include <executorch/runtime/kernel/kernel_includes.h>
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 
 namespace torch {
 namespace executor {
@@ -21,13 +23,12 @@ namespace native {
 
 using Tensor = executorch::aten::Tensor;
 using ScalarType = executorch::aten::ScalarType;
-using string_view = std::string_view;
 
 namespace {
 
 enum class ReduceMode { Sum, Prod, Mean, Amax, Amin };
 
-bool parse_reduce_mode(string_view reduce, ReduceMode* mode) {
+bool parse_reduce_mode(std::string_view reduce, ReduceMode* mode) {
   if (reduce == "sum") {
     *mode = ReduceMode::Sum;
   } else if (reduce == "prod") {
@@ -41,7 +42,7 @@ bool parse_reduce_mode(string_view reduce, ReduceMode* mode) {
   } else {
     ET_LOG(
         Error,
-        "Unsupported reduce mode '%.*s'; expected one of sum, prod, mean, amax, amin",
+        "reduce argument must be either sum, prod, mean, amax or amin, got %.*s",
         static_cast<int>(reduce.size()),
         reduce.data());
     return false;
@@ -49,52 +50,61 @@ bool parse_reduce_mode(string_view reduce, ReduceMode* mode) {
   return true;
 }
 
-// The value a position starts from when `self` is not included in the
-// reduction.
 template <typename CTYPE>
-CTYPE identity_for(ReduceMode mode) {
+CTYPE reduce_identity(ReduceMode mode) {
+  using limits = std::numeric_limits<CTYPE>;
   switch (mode) {
     case ReduceMode::Prod:
       return static_cast<CTYPE>(1);
     case ReduceMode::Amax:
-      return std::numeric_limits<CTYPE>::has_infinity
-          ? -std::numeric_limits<CTYPE>::infinity()
-          : std::numeric_limits<CTYPE>::lowest();
+      return limits::has_infinity ? -limits::infinity() : limits::lowest();
     case ReduceMode::Amin:
-      return std::numeric_limits<CTYPE>::has_infinity
-          ? std::numeric_limits<CTYPE>::infinity()
-          : std::numeric_limits<CTYPE>::max();
+      return limits::has_infinity ? limits::infinity() : limits::max();
     case ReduceMode::Sum:
     case ReduceMode::Mean:
-    default:
-      return static_cast<CTYPE>(0);
+      break;
+  }
+  return static_cast<CTYPE>(0);
+}
+
+template <typename CTYPE>
+CTYPE reduce_pair(ReduceMode mode, CTYPE acc, CTYPE value) {
+  switch (mode) {
+    case ReduceMode::Sum:
+    case ReduceMode::Mean:
+      return static_cast<CTYPE>(acc + value);
+    case ReduceMode::Prod:
+      return static_cast<CTYPE>(acc * value);
+    case ReduceMode::Amax:
+      return utils::isnan_override(value) || acc < value ? value : acc;
+    case ReduceMode::Amin:
+      return utils::isnan_override(value) || value < acc ? value : acc;
+  }
+  return acc;
+}
+
+template <typename CTYPE>
+CTYPE mean_divide(CTYPE sum, int64_t count) {
+  if constexpr (std::is_integral_v<CTYPE>) {
+    return utils::floor_divide<CTYPE>(sum, static_cast<CTYPE>(count));
+  } else {
+    return static_cast<CTYPE>(sum / static_cast<CTYPE>(count));
   }
 }
 
-// The flat indices in `src` and `out` that element `ix` of `index` relates.
-void resolve_indices(
-    const Tensor& index,
-    const int64_t* index_data,
-    const Tensor& src,
+size_t output_index(
     const Tensor& out,
     int64_t dim,
-    size_t ix,
-    size_t* src_ix,
-    size_t* out_ix) {
-  // @lint-ignore CLANGTIDY facebook-hte-CArray
-  size_t ix_coord[kTensorDimensionLimit];
-  indexToCoordinate(index, ix, ix_coord);
-
-  *src_ix = coordinateToIndex(src, ix_coord);
-
+    int64_t index_value,
+    const size_t* ix_coord) {
   // @lint-ignore CLANGTIDY facebook-hte-CArray
   size_t out_coord[kTensorDimensionLimit];
   for (const auto d : c10::irange(out.dim())) {
     out_coord[d] = static_cast<int64_t>(d) == dim
-        ? static_cast<size_t>(index_data[ix])
+        ? static_cast<size_t>(index_value)
         : ix_coord[d];
   }
-  *out_ix = coordinateToIndex(out, out_coord);
+  return coordinateToIndex(out, out_coord);
 }
 
 template <typename CTYPE>
@@ -109,55 +119,31 @@ void scatter_reduce_helper(
   const int64_t* const index_data = index.const_data_ptr<int64_t>();
   const CTYPE* const src_data = src.const_data_ptr<CTYPE>();
   CTYPE* const out_data = out.mutable_data_ptr<CTYPE>();
-
-  // Count how many src values reach each output position. A position that gets
-  // none keeps its `self` value, whatever include_self says.
-  std::fill(counts, counts + out.numel(), int64_t{0});
-  for (const auto ix : c10::irange(index.numel())) {
-    size_t src_ix = 0;
-    size_t out_ix = 0;
-    resolve_indices(index, index_data, src, out, dim, ix, &src_ix, &out_ix);
-    counts[out_ix] += 1;
-  }
+  // @lint-ignore CLANGTIDY facebook-hte-CArray
+  size_t ix_coord[kTensorDimensionLimit];
 
   if (!include_self) {
-    const CTYPE identity = identity_for<CTYPE>(mode);
-    for (const auto i : c10::irange(out.numel())) {
-      if (counts[i] > 0) {
-        out_data[i] = identity;
-      }
+    const CTYPE identity = reduce_identity<CTYPE>(mode);
+    for (const auto ix : c10::irange(index.numel())) {
+      indexToCoordinate(index, ix, ix_coord);
+      out_data[output_index(out, dim, index_data[ix], ix_coord)] = identity;
     }
   }
 
   for (const auto ix : c10::irange(index.numel())) {
-    size_t src_ix = 0;
-    size_t out_ix = 0;
-    resolve_indices(index, index_data, src, out, dim, ix, &src_ix, &out_ix);
-    const CTYPE value = src_data[src_ix];
-    CTYPE& target = out_data[out_ix];
-    switch (mode) {
-      case ReduceMode::Sum:
-      case ReduceMode::Mean:
-        target += value;
-        break;
-      case ReduceMode::Prod:
-        target *= value;
-        break;
-      case ReduceMode::Amax:
-        target = std::max(target, value);
-        break;
-      case ReduceMode::Amin:
-        target = std::min(target, value);
-        break;
+    indexToCoordinate(index, ix, ix_coord);
+    const size_t out_ix = output_index(out, dim, index_data[ix], ix_coord);
+    const CTYPE value = src_data[coordinateToIndex(src, ix_coord)];
+    out_data[out_ix] = reduce_pair(mode, out_data[out_ix], value);
+    if (counts != nullptr) {
+      counts[out_ix] += 1;
     }
   }
 
-  if (mode == ReduceMode::Mean) {
+  if (counts != nullptr) {
     for (const auto i : c10::irange(out.numel())) {
-      const int64_t divisor = counts[i] + (include_self ? 1 : 0);
-      if (counts[i] > 0 && divisor > 1) {
-        out_data[i] = static_cast<CTYPE>(
-            out_data[i] / static_cast<CTYPE>(divisor));
+      if (counts[i] > 1) {
+        out_data[i] = mean_divide(out_data[i], counts[i]);
       }
     }
   }
@@ -171,7 +157,7 @@ Tensor& scatter_reduce_two_out(
     int64_t dim,
     const Tensor& index,
     const Tensor& src,
-    string_view reduce,
+    std::string_view reduce,
     bool include_self,
     Tensor& out) {
   ReduceMode mode = ReduceMode::Sum;
@@ -182,6 +168,13 @@ Tensor& scatter_reduce_two_out(
       check_scatter_add_args(self, dim, index, src, out),
       InvalidArgument,
       out);
+
+  ET_KERNEL_CHECK_MSG(
+      ctx,
+      !(mode == ReduceMode::Mean && self.scalar_type() == ScalarType::Bool),
+      InvalidArgument,
+      out,
+      "scatter_reduce mean does not support Bool");
 
   ET_KERNEL_CHECK(
       ctx, tensors_have_same_dim_order(self, src, out), InvalidArgument, out);
@@ -196,40 +189,28 @@ Tensor& scatter_reduce_two_out(
   ET_KERNEL_CHECK(
       ctx, resize_tensor(out, self.sizes()) == Error::Ok, InvalidArgument, out);
 
-  // @lint-ignore CLANGTIDY facebook-hte-CArray
-  ET_DEFINE_OPERATOR_NAME(name, "scatter_reduce.two_out");
+  // Mean needs the number of contributions per output position, which the
+  // output buffer cannot hold alongside the running sum.
+  int64_t* counts = nullptr;
+  if (mode == ReduceMode::Mean && index.numel() > 0) {
+    Result<void*> counts_mem = ctx.allocate_temp(out.numel() * sizeof(int64_t));
+    ET_KERNEL_CHECK(ctx, counts_mem.ok(), MemoryAllocationFailed, out);
+    counts = static_cast<int64_t*>(counts_mem.get());
+    std::fill(counts, counts + out.numel(), include_self ? 1 : 0);
+  }
 
-  bool temp_mem_allocated = false;
+  static constexpr const char op_name[] = "scatter_reduce.two_out";
 
-  ET_SWITCH_REALHBBF16_TYPES(self.scalar_type(), ctx, name, CTYPE, [&]() {
+  ET_SWITCH_REALHBBF16_TYPES(self.scalar_type(), ctx, op_name, CTYPE, [&]() {
     std::memcpy(
-        out.mutable_data_ptr<CTYPE>(), self.const_data_ptr<CTYPE>(), self.nbytes());
-
-    if (index.numel() == 0) {
-      temp_mem_allocated = true;
-      return;
+        out.mutable_data_ptr<CTYPE>(),
+        self.const_data_ptr<CTYPE>(),
+        self.nbytes());
+    if (index.numel() > 0) {
+      scatter_reduce_helper<CTYPE>(
+          dim, index, src, mode, include_self, out, counts);
     }
-
-    // One count per output element decides which positions the reduction
-    // touches, which is what include_self and the mean divisor need.
-    Result<void*> counts_mem =
-        ctx.allocate_temp(out.numel() * sizeof(int64_t));
-    if (!counts_mem.ok()) {
-      return;
-    }
-    temp_mem_allocated = true;
-
-    scatter_reduce_helper<CTYPE>(
-        dim,
-        index,
-        src,
-        mode,
-        include_self,
-        out,
-        static_cast<int64_t*>(counts_mem.get()));
   });
-
-  ET_KERNEL_CHECK(ctx, temp_mem_allocated, MemoryAllocationFailed, out);
 
   return out;
 }
